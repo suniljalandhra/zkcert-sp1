@@ -66,7 +66,7 @@ enum Cmd {
 struct EmailArgs {
     /// The completion email (.eml).
     eml: PathBuf,
-    /// Wallet the proof is bound to.
+    /// Wallet the proof is bound to (required for `prove`; `execute` defaults to zero).
     #[arg(long, default_value_t = Address::ZERO)]
     wallet: Address,
     /// Reveal the course name in the public values.
@@ -135,6 +135,11 @@ fn run() -> Result<()> {
             println!("cycles: {cycles}");
         }
         Cmd::Prove { email, out } => {
+            if email.wallet == Address::ZERO {
+                bail!(
+                    "--wallet is required: the proof is bound to it and only that wallet can claim"
+                );
+            }
             let p = load(&email)?;
             let bundle = ZkProver::from_env()?.prove(&p.input)?;
             std::fs::write(&out, serde_json::to_string_pretty(&bundle)?)?;

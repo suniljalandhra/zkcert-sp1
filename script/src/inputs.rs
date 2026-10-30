@@ -57,9 +57,7 @@ pub async fn prepare(
     let sig = report
         .selected
         .map(|i| &report.signatures[i])
-        .ok_or_else(|| {
-            anyhow!("no usable Coursera/Udemy DKIM signature (run `discover` for details)")
-        })?;
+        .ok_or_else(|| anyhow!("{}", rejection(&report)))?;
     let tags = sig.tags.as_ref().map_err(|e| anyhow!("{e}"))?;
     let key = sig.key.as_ref().map_err(|e| anyhow!("{e}"))?;
     let (header_c, body_c) = canon::parse_c(&tags.c).context("unsupported c=")?;
@@ -94,4 +92,32 @@ fn find_dkim<'a>(headers: &'a [RawHeader], want: &DkimTags) -> Result<&'a RawHea
         (None, _) => bail!("selected DKIM-Signature not found"),
         _ => bail!("selected DKIM-Signature appears twice"),
     }
+}
+
+/// Why no signature was usable, in words a user can act on (no email content is included).
+pub fn rejection(report: &crate::discover::Report) -> String {
+    let Some(sig) = report.signatures.iter().find(|s| s.platform().is_some()) else {
+        return if report.signatures.is_empty() {
+            "the email has no DKIM signature".into()
+        } else {
+            "not signed by Coursera or Udemy (unsupported sender, or a forwarded email)".into()
+        };
+    };
+    if let Some((check, _)) = sig.checks.iter().find(|(_, ok)| !ok) {
+        return format!("Coursera/Udemy signature rejected: {check} failed");
+    }
+    if let Err(e) = &sig.key {
+        if e.starts_with("no pinned key") {
+            return "the signing key is not on the zkCert allowlist (config/dkim-keys.json)".into();
+        }
+        return format!("signing key not accepted: {e}");
+    }
+    let detail = match sig.host_verify.as_str() {
+        v if v.contains("BodyHash") || v.contains("FailedBodyHash") => "the body was modified",
+        v if v.contains("Signature") || v.contains("FailedVerification") => {
+            "the headers were modified"
+        }
+        v => v,
+    };
+    format!("DKIM signature invalid: {detail}")
 }
