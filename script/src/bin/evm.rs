@@ -12,13 +12,13 @@
 
 use alloy_sol_types::SolType;
 use clap::{Parser, ValueEnum};
-use zkcert_lib::PublicValuesStruct;
 use serde::{Deserialize, Serialize};
 use sp1_sdk::{
     blocking::{ProveRequest, Prover, ProverClient},
     include_elf, Elf, HashableKey, ProvingKey, SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey,
 };
 use std::path::PathBuf;
+use zkcert_lib::PublicValuesStruct;
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
 const ZKCERT_ELF: Elf = include_elf!("zkcert-program");

@@ -1,3 +1,6 @@
+pub mod dkim;
+pub mod platform;
+
 use alloy_sol_types::sol;
 
 sol! {

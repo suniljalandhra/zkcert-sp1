@@ -4,6 +4,9 @@ name = "zkcert-script"
 edition = "2021"
 default-run = "zkcert"
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "zkcert"
 path = "src/bin/main.rs"
@@ -11,6 +14,10 @@ path = "src/bin/main.rs"
 [[bin]]
 name = "evm"
 path = "src/bin/evm.rs"
+
+[[bin]]
+name = "discover"
+path = "src/bin/discover.rs"
 
 [[bin]]
 name = "vkey"
@@ -26,6 +33,17 @@ hex = "0.4.3"
 alloy-sol-types = { workspace = true }
 zkcert-lib = { path = "../lib" }
 dotenv = "0.15.0"
+# Host-only email handling (never compiled into the guest).
+mail-auth = { version = "0.15.0", default-features = false, features = ["rust-crypto", "dns-hickory"] }
+mail-parser = "1.0.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+rsa = "0.9.10"
+base64 = "0.22.1"
+alloy-primitives = "1.7.3"
+anyhow = "1.0"
+
+[dev-dependencies]
+rustls-pki-types = "1.15.1"
 
 [build-dependencies]
 sp1-build = { version = "6.10.0" }

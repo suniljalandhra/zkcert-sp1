@@ -12,11 +12,11 @@
 
 use alloy_sol_types::SolType;
 use clap::Parser;
-use zkcert_lib::PublicValuesStruct;
 use sp1_sdk::{
     blocking::{ProveRequest, Prover, ProverClient},
     include_elf, Elf, ProvingKey, SP1Stdin,
 };
+use zkcert_lib::PublicValuesStruct;
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
 const ZKCERT_ELF: Elf = include_elf!("zkcert-program");

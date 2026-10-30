@@ -11,7 +11,10 @@ struct Health {
 }
 
 async fn health() -> Json<Health> {
-    Json(Health { status: "ok", version: env!("CARGO_PKG_VERSION") })
+    Json(Health {
+        status: "ok",
+        version: env!("CARGO_PKG_VERSION"),
+    })
 }
 
 fn app() -> Router {
@@ -33,7 +36,9 @@ async fn main() {
         .parse()
         .expect("ZKCERT_SERVER_ADDR must be host:port");
 
-    let listener = tokio::net::TcpListener::bind(addr).await.expect("failed to bind");
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .expect("failed to bind");
     tracing::info!("zkcert-server listening on http://{addr}");
     axum::serve(listener, app())
         .with_graceful_shutdown(async {
@@ -58,7 +63,9 @@ mod tests {
             .unwrap();
         assert_eq!(res.status(), 200);
         let body = res.into_body().collect().await.unwrap().to_bytes();
-        assert!(std::str::from_utf8(&body).unwrap().contains("\"status\":\"ok\""));
+        assert!(std::str::from_utf8(&body)
+            .unwrap()
+            .contains("\"status\":\"ok\""));
     }
 
     #[tokio::test]
