@@ -1,13 +1,14 @@
 import { http, createConfig } from 'wagmi'
-import { baseSepolia, sepolia } from 'wagmi/chains'
+import { baseSepolia } from 'wagmi/chains'
+import { injected } from 'wagmi/connectors'
 
-// Testnets only. RPC URLs fall back to the chains' public endpoints when unset.
+// Base Sepolia only: the SP1 Groth16 gateway and EAS (predeploy) both live there.
 export const config = createConfig({
   ssr: true,
-  chains: [sepolia, baseSepolia],
+  chains: [baseSepolia],
+  connectors: [injected()],
   transports: {
-    [sepolia.id]: http(process.env.NEXT_PUBLIC_SEPOLIA_RPC_URL),
-    [baseSepolia.id]: http(process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL),
+    [baseSepolia.id]: http(process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL || undefined),
   },
 })
 
