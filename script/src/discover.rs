@@ -181,7 +181,7 @@ pub fn guest_checks(tags: &DkimTags, facts: HeaderFacts) -> Vec<(&'static str, b
     vec![
         ("v=1", tags.v == "1"),
         ("a=rsa-sha256", tags.a.eq_ignore_ascii_case("rsa-sha256")),
-        ("d= is coursera.org/udemy.com", sig_platform.is_some()),
+        ("d= is a platform domain", sig_platform.is_some()),
         ("h= signs from", tags.signs_header("from")),
         ("h= signs subject", tags.signs_header("subject")),
         ("no l= tag", tags.l.is_none()),

@@ -23,6 +23,8 @@ fixtures/*
 !fixtures/README.md
 !fixtures/redacted/
 *.eml
+# Synthetic emails signed with throwaway keys (no personal data) may be committed.
+!fixtures/redacted/*.eml
 *.mbox
 *.msg
 

@@ -1,97 +1,188 @@
-//! An end-to-end example of using the SP1 SDK to generate a proof of a program that can be executed
-//! or have a core proof generated.
+//! zkcert CLI.
 //!
-//! You can run this script using the following command:
 //! ```shell
-//! RUST_LOG=info cargo run --release -- --execute
+//! cargo run --release -- execute fixtures/sample.eml            # run the guest, print cycles
+//! cargo run --release -- prove fixtures/sample.eml --wallet 0x… # Groth16 proof -> zkcert-proof.json
+//! cargo run --release -- verify zkcert-proof.json               # offline verification
+//! cargo run --release -- vkey                                   # program verification key
 //! ```
-//! or
-//! ```shell
-//! RUST_LOG=info cargo run --release -- --prove
-//! ```
+//! `SP1_PROVER=mock|cpu|cuda|network` selects the prover (see .env.example).
 
-use alloy_sol_types::SolType;
-use clap::Parser;
-use sp1_sdk::{
-    blocking::{ProveRequest, Prover, ProverClient},
-    include_elf, Elf, ProvingKey, SP1Stdin,
+use std::{path::PathBuf, process::ExitCode};
+
+use alloy_primitives::Address;
+use anyhow::{bail, Context, Result};
+use clap::{Args, Parser, Subcommand};
+use zkcert_lib::PublicValues;
+use zkcert_script::{
+    bundle::{verify_bundle, Decoded, ProofBundle},
+    discover::KeySource,
+    inputs::{prepare, Prepared},
+    keys,
+    prover::{pinned_vkey, program_vkey, ZkProver},
+    synth,
 };
-use zkcert_lib::PublicValuesStruct;
 
-/// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
-const ZKCERT_ELF: Elf = include_elf!("zkcert-program");
-
-/// The arguments for the command.
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    #[arg(long)]
-    execute: bool,
-
-    #[arg(long)]
-    prove: bool,
-
-    #[arg(long, default_value = "20")]
-    n: u32,
+#[derive(Parser)]
+#[command(about = "Prove a Coursera/Udemy certificate email with SP1")]
+struct Cli {
+    #[command(subcommand)]
+    cmd: Cmd,
 }
 
-fn main() {
-    // Setup the logger.
-    sp1_sdk::utils::setup_logger();
-    dotenv::dotenv().ok();
+#[derive(Subcommand)]
+enum Cmd {
+    /// Run the guest without proving and print the cycle count.
+    Execute(EmailArgs),
+    /// Generate a Groth16 proof and write a proof bundle.
+    Prove {
+        #[command(flatten)]
+        email: EmailArgs,
+        #[arg(long, default_value = "zkcert-proof.json")]
+        out: PathBuf,
+    },
+    /// Verify a proof bundle offline (vkey, key allowlist, Groth16 proof).
+    Verify {
+        bundle: PathBuf,
+        /// Accept bundles made with SP1_PROVER=mock (they contain no real proof).
+        #[arg(long)]
+        allow_mock: bool,
+    },
+    /// Print the program verification key.
+    Vkey {
+        /// Also pin it in config/program.json (read by `verify`, the web UI and the deploy).
+        #[arg(long)]
+        write: bool,
+    },
+    /// Write a synthetic Udemy email signed with a fresh throwaway key, plus its DKIM record
+    /// (for fixtures and demos without personal data).
+    Synth {
+        #[arg(long, default_value = "fixtures/redacted")]
+        dir: PathBuf,
+    },
+}
 
-    // Parse the command line arguments.
-    let args = Args::parse();
+#[derive(Args)]
+struct EmailArgs {
+    /// The completion email (.eml).
+    eml: PathBuf,
+    /// Wallet the proof is bound to.
+    #[arg(long, default_value_t = Address::ZERO)]
+    wallet: Address,
+    /// Reveal the course name in the public values.
+    #[arg(long)]
+    disclose: bool,
+    /// Fetch DKIM keys from live DNS instead of config/dkim-keys.json.
+    #[arg(long, conflicts_with = "key")]
+    dns: bool,
+    /// Use this key record instead of the allowlist: `<selector>._domainkey.<domain>=<file>`.
+    /// The proof is still produced; verifiers reject it unless the key is allowlisted.
+    #[arg(long, value_name = "NAME=FILE")]
+    key: Vec<String>,
+}
 
-    if args.execute == args.prove {
-        eprintln!("Error: You must specify either --execute or --prove");
-        std::process::exit(1);
-    }
-
-    // Setup the prover client.
-    let client = ProverClient::from_env();
-
-    // Setup the inputs.
-    let mut stdin = SP1Stdin::new();
-    stdin.write(&args.n);
-
-    println!("n: {}", args.n);
-
-    if args.execute {
-        // Execute the program
-        let (output, report) = client.execute(ZKCERT_ELF, stdin).run().unwrap();
-        println!("Program executed successfully.");
-
-        // Read the output.
-        let decoded = PublicValuesStruct::abi_decode(output.as_slice()).unwrap();
-        let PublicValuesStruct { n, a, b } = decoded;
-        println!("n: {}", n);
-        println!("a: {}", a);
-        println!("b: {}", b);
-
-        let (expected_a, expected_b) = zkcert_lib::fibonacci(n);
-        assert_eq!(a, expected_a);
-        assert_eq!(b, expected_b);
-        println!("Values are correct!");
-
-        // Record the number of cycles executed.
-        println!("Number of cycles: {}", report.total_instruction_count());
+fn load(args: &EmailArgs) -> Result<Prepared> {
+    let raw =
+        std::fs::read(&args.eml).with_context(|| format!("reading {}", args.eml.display()))?;
+    let keys = if args.dns {
+        KeySource::Dns
+    } else if !args.key.is_empty() {
+        let mut map = std::collections::HashMap::new();
+        for spec in &args.key {
+            let (name, file) = spec.split_once('=').context("--key expects NAME=FILE")?;
+            map.insert(
+                name.to_ascii_lowercase(),
+                std::fs::read_to_string(file)?.trim().to_string(),
+            );
+        }
+        KeySource::Pinned(map)
     } else {
-        // Setup the program for proving.
-        let pk = client.setup(ZKCERT_ELF).expect("failed to setup elf");
+        keys::pinned_source()
+    };
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(prepare(
+        &raw,
+        &keys,
+        args.wallet.into_array(),
+        args.disclose,
+    ))
+}
 
-        // Generate the proof
-        let proof = client
-            .prove(&pk, stdin)
-            .run()
-            .expect("failed to generate proof");
+fn print_values(v: &PublicValues) {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&Decoded::from(v)).unwrap()
+    );
+    if keys::lookup(v.platform, v.dkimKeyHash).is_none() {
+        println!(
+            "warning: DKIM key {} is not on the allowlist",
+            v.dkimKeyHash
+        );
+    }
+}
 
-        println!("Successfully generated proof!");
+fn run() -> Result<()> {
+    dotenv::dotenv().ok();
+    sp1_sdk::utils::setup_logger();
+    match Cli::parse().cmd {
+        Cmd::Execute(args) => {
+            let p = load(&args)?;
+            let (values, cycles) = ZkProver::from_env()?.execute(&p.input)?;
+            if values != p.expected {
+                bail!("guest output differs from host verification");
+            }
+            print_values(&values);
+            println!("cycles: {cycles}");
+        }
+        Cmd::Prove { email, out } => {
+            let p = load(&email)?;
+            let bundle = ZkProver::from_env()?.prove(&p.input)?;
+            std::fs::write(&out, serde_json::to_string_pretty(&bundle)?)?;
+            print_values(&p.expected);
+            println!("wrote {}", out.display());
+        }
+        Cmd::Verify { bundle, allow_mock } => {
+            let b: ProofBundle =
+                serde_json::from_slice(&std::fs::read(&bundle)?).context("not a zkcert bundle")?;
+            let values = verify_bundle(&b, &pinned_vkey()?, &keys::allowlist(), allow_mock)?;
+            print_values(&values);
+            println!("VALID ({})", b.proof_system);
+        }
+        Cmd::Vkey { write } => {
+            let vkey = program_vkey();
+            println!("{vkey}");
+            if write {
+                let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../config/program.json");
+                std::fs::write(path, format!("{{\n  \"vkey\": \"{vkey}\"\n}}\n"))?;
+                println!("pinned in config/program.json (rebuild to embed it)");
+            }
+        }
+        Cmd::Synth { dir } => {
+            let key = rsa::RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048)?;
+            let mail = synth::udemy();
+            std::fs::create_dir_all(&dir)?;
+            std::fs::write(dir.join("synthetic-udemy.eml"), synth::sign(&mail, &key))?;
+            std::fs::write(dir.join("synthetic-udemy.key"), synth::record(&key))?;
+            println!(
+                "wrote {0}/synthetic-udemy.eml and {0}/synthetic-udemy.key",
+                dir.display()
+            );
+            println!(
+                "use: --key {}={}/synthetic-udemy.key",
+                synth::key_name(&mail),
+                dir.display()
+            );
+        }
+    }
+    Ok(())
+}
 
-        // Verify the proof.
-        client
-            .verify(&proof, pk.verifying_key(), None)
-            .expect("failed to verify proof");
-        println!("Successfully verified proof!");
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e:#}");
+            ExitCode::FAILURE
+        }
     }
 }

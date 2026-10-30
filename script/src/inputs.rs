@@ -1,0 +1,97 @@
+//! Builds the guest input from a raw .eml: pick the platform signature, canonicalize, and check
+//! the result with the same `verify` the guest runs.
+
+use anyhow::{anyhow, bail, Context, Result};
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use zkcert_lib::{
+    canon::{self, RawHeader},
+    dkim::{parse_tag_list, DkimTags},
+    verify::{verify, GuestInput},
+    PublicValues,
+};
+
+use crate::discover::{analyze, KeySource};
+
+/// Converts bare LF line endings to CRLF (some mail clients save .eml files that way).
+pub fn normalize_crlf(raw: &[u8]) -> Vec<u8> {
+    if raw.windows(2).any(|w| w == b"\r\n") {
+        return raw.to_vec();
+    }
+    let mut out = Vec::with_capacity(raw.len() + raw.len() / 32);
+    for &b in raw {
+        if b == b'\n' {
+            out.push(b'\r');
+        }
+        out.push(b);
+    }
+    out
+}
+
+/// The SPKI DER inside a DKIM key record's p= tag.
+pub fn key_der(record: &str) -> Result<Vec<u8>> {
+    let tags = parse_tag_list(record).map_err(|e| anyhow!("key record: {e}"))?;
+    let p: String = tags
+        .iter()
+        .find(|(n, _)| n == "p")
+        .context("key record has no p=")?
+        .1
+        .split_whitespace()
+        .collect();
+    B64.decode(p).context("p= is not base64")
+}
+
+pub struct Prepared {
+    pub input: GuestInput,
+    /// What the guest will commit, computed on the host.
+    pub expected: PublicValues,
+}
+
+pub async fn prepare(
+    raw: &[u8],
+    keys: &KeySource,
+    wallet: [u8; 20],
+    disclose: bool,
+) -> Result<Prepared> {
+    let raw = normalize_crlf(raw);
+    let report = analyze(&raw, keys).await?;
+    let sig = report
+        .selected
+        .map(|i| &report.signatures[i])
+        .ok_or_else(|| {
+            anyhow!("no usable Coursera/Udemy DKIM signature (run `discover` for details)")
+        })?;
+    let tags = sig.tags.as_ref().map_err(|e| anyhow!("{e}"))?;
+    let key = sig.key.as_ref().map_err(|e| anyhow!("{e}"))?;
+    let (header_c, body_c) = canon::parse_c(&tags.c).context("unsupported c=")?;
+
+    let (headers, body) = canon::split_message(&raw).context("cannot split headers and body")?;
+    let dkim = find_dkim(&headers, tags)?;
+    // The signature being verified is never one of its own signed headers (§3.7).
+    let others: Vec<RawHeader> = headers
+        .iter()
+        .filter(|h| !std::ptr::eq(*h, dkim))
+        .cloned()
+        .collect();
+    let input = GuestInput {
+        headers: canon::signed_headers(header_c, &others, &tags.h, dkim),
+        body: canon::body(body_c, body),
+        signature: B64.decode(&tags.b).context("b= is not base64")?,
+        public_key_der: key_der(&key.record)?,
+        wallet,
+        disclose,
+    };
+    let expected = verify(&input).map_err(|e| anyhow!("guest check would fail: {e}"))?;
+    Ok(Prepared { input, expected })
+}
+
+fn find_dkim<'a>(headers: &'a [RawHeader], want: &DkimTags) -> Result<&'a RawHeader> {
+    let mut matches = headers.iter().filter(|h| {
+        h.name.trim().eq_ignore_ascii_case("dkim-signature")
+            && DkimTags::parse(&h.value).is_ok_and(|t| t == *want)
+    });
+    match (matches.next(), matches.next()) {
+        (Some(h), None) => Ok(h),
+        (None, _) => bail!("selected DKIM-Signature not found"),
+        _ => bail!("selected DKIM-Signature appears twice"),
+    }
+}

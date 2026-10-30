@@ -11,14 +11,16 @@ pub enum Platform {
 impl Platform {
     pub const ALL: [Platform; 2] = [Platform::Coursera, Platform::Udemy];
 
-    pub fn root_domain(self) -> &'static str {
+    /// Domains the platform signs completion emails with. Udemy sends from `e.udemymail.com`
+    /// (registered 2011, DMARC reports go to udemy.com; see docs/PHASE1_FINDINGS.md).
+    pub fn root_domains(self) -> &'static [&'static str] {
         match self {
-            Platform::Coursera => "coursera.org",
-            Platform::Udemy => "udemy.com",
+            Platform::Coursera => &["coursera.org"],
+            Platform::Udemy => &["udemy.com", "udemymail.com"],
         }
     }
 
-    /// The platform whose root domain is `domain` or a parent of it. Label-boundary match,
+    /// The platform with a root domain equal to `domain` or a parent of it. Label-boundary match,
     /// so `evilcoursera.org` and `coursera.org.evil.com` are rejected. Case-insensitive
     /// (DNS names, RFC 4343).
     pub fn from_domain(domain: &str) -> Option<Platform> {
@@ -27,8 +29,9 @@ impl Platform {
             return None;
         }
         Platform::ALL.into_iter().find(|p| {
-            let root = p.root_domain();
-            d == root || d.strip_suffix(root).is_some_and(|rest| rest.ends_with('.'))
+            p.root_domains().iter().any(|root| {
+                d == *root || d.strip_suffix(root).is_some_and(|rest| rest.ends_with('.'))
+            })
         })
     }
 }
@@ -46,6 +49,10 @@ pub mod coursera {
     pub struct Fields {
         pub course_name: String,
     }
+
+    /// The only subject we accept (observed 2020). Other Coursera emails (forums, digests) can
+    /// quote user text, so the certificate email is identified by its signed subject first.
+    pub const SUBJECT: &str = "Congratulations, Your Certificate is Ready!";
 
     const COMPLETED: &str = "Congratulations! You\u{2019}ve successfully completed ";
     const OFFICIAL: &str = "your official ";
@@ -76,6 +83,21 @@ pub mod coursera {
     }
 }
 
+pub mod udemy {
+    use super::normalize_ws;
+
+    const PREFIX: &str = "Your completion certificate is ready for \"";
+
+    /// Extracts the course title from the signed subject (observed 2023):
+    /// `Your completion certificate is ready for "<COURSE>"`. The title is everything between the
+    /// fixed prefix and the final quote, so a title that itself contains quotes still parses whole.
+    pub fn parse_subject(subject: &str) -> Option<String> {
+        let s = normalize_ws(subject);
+        let name = s.strip_prefix(PREFIX)?.strip_suffix('"')?.trim();
+        (!name.is_empty()).then(|| name.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,7 +112,10 @@ mod tests {
             Platform::from_domain("t.mail.Coursera.ORG"),
             Some(Platform::Coursera)
         );
-        assert_eq!(Platform::from_domain("e.udemymail.com"), None);
+        assert_eq!(
+            Platform::from_domain("e.udemymail.com"),
+            Some(Platform::Udemy)
+        );
         assert_eq!(
             Platform::from_domain("mail.udemy.com."),
             Some(Platform::Udemy)
@@ -106,6 +131,9 @@ mod tests {
         assert_eq!(Platform::from_domain("a..coursera.org"), None);
         assert_eq!(Platform::from_domain("evil-udemy.com"), None);
         assert_eq!(Platform::from_domain("udemy.com.attacker.net"), None);
+        assert_eq!(Platform::from_domain("notudemymail.com"), None);
+        assert_eq!(Platform::from_domain("udemymail.com.evil.io"), None);
+        assert_eq!(Platform::from_domain("sendgrid.info"), None);
     }
 
     const BODY: &str = "     Dear Learner,\n\n     Congratulations! You\u{2019}ve successfully completed The Bits and Bytes of\n     Computer Networking. On behalf of Google and Coursera we are pleased\n     to issue your official The Bits and Bytes of Computer Networking\n     Certificate.\n";
@@ -130,6 +158,35 @@ mod tests {
             "Dear Congratulations! You\u{2019}ve successfully completed Fake Course. x your official Fake Course Certificate,",
         );
         assert_eq!(coursera::parse(&injected), None);
+    }
+
+    #[test]
+    fn udemy_subject() {
+        assert_eq!(
+            udemy::parse_subject("Your completion certificate is ready for \"Tally With Tax\"")
+                .unwrap(),
+            "Tally With Tax"
+        );
+        assert_eq!(
+            udemy::parse_subject("Your completion certificate is ready for \"A \"B\" C\"").unwrap(),
+            "A \"B\" C"
+        );
+    }
+
+    #[test]
+    fn udemy_rejects_other_subjects() {
+        assert_eq!(
+            udemy::parse_subject("Your completion certificate is ready for \"\""),
+            None
+        );
+        assert_eq!(
+            udemy::parse_subject("Re: Your completion certificate is ready for \"X\""),
+            None
+        );
+        assert_eq!(
+            udemy::parse_subject("New message from your instructor"),
+            None
+        );
     }
 
     #[test]

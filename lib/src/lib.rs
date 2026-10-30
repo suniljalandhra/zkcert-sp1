@@ -1,25 +1,28 @@
+pub mod canon;
 pub mod dkim;
+pub mod mime;
 pub mod platform;
+pub mod verify;
 
 use alloy_sol_types::sol;
 
 sol! {
-    /// The public values encoded as a struct that can be easily deserialized inside Solidity.
-    struct PublicValuesStruct {
-        uint32 n;
-        uint32 a;
-        uint32 b;
+    #[derive(Debug, PartialEq, Eq)]
+    /// What a proof reveals. ABI-encoded by the guest; decoded by ZkCertRegistry.sol and the web UI.
+    struct PublicValues {
+        /// 1 = Coursera, 2 = Udemy.
+        uint8 platform;
+        /// keccak256 of the course name (whitespace-normalized UTF-8).
+        bytes32 courseHash;
+        /// The course name, or empty unless the user chose to disclose it.
+        string courseName;
+        /// DKIM t= rounded down to the UTC day (Unix seconds); 0 when there is no t= (Udemy).
+        uint64 completedAt;
+        /// keccak256 of the DKIM public key (SPKI DER); verifiers check it against an allowlist.
+        bytes32 dkimKeyHash;
+        /// keccak256("zkcert-v1", platform, courseHash, keccak256(lowercase To address)).
+        bytes32 nullifier;
+        /// The wallet this proof is bound to.
+        address wallet;
     }
-}
-
-/// Compute the n'th fibonacci number (wrapping around on overflows), using normal Rust code.
-pub fn fibonacci(n: u32) -> (u32, u32) {
-    let mut a = 0u32;
-    let mut b = 1u32;
-    for _ in 0..n {
-        let c = a.wrapping_add(b);
-        a = b;
-        b = c;
-    }
-    (a, b)
 }

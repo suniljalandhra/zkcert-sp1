@@ -3,5 +3,12 @@ name = "zkcert-lib"
 version = "0.1.0"
 edition = "2021"
 
+# Shared by the host and the SP1 guest. In the guest, rsa / sha2 / crypto-bigint / tiny-keccak are
+# replaced by sp1-patches forks (see program/Cargo.toml) that call the zkVM precompiles.
 [dependencies]
 alloy-sol-types = { workspace = true }
+serde = { version = "1.0.200", default-features = false, features = ["derive", "std"] }
+rsa = { version = "0.9", features = ["sha2"] }
+sha2 = "0.10"
+tiny-keccak = { version = "2.0.2", features = ["keccak"] }
+base64 = "0.22.1"

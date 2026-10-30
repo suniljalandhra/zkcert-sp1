@@ -12,10 +12,6 @@ name = "zkcert"
 path = "src/bin/main.rs"
 
 [[bin]]
-name = "evm"
-path = "src/bin/evm.rs"
-
-[[bin]]
 name = "discover"
 path = "src/bin/discover.rs"
 
@@ -25,7 +21,7 @@ path = "src/bin/vkey.rs"
 
 [dependencies]
 sp1-sdk = { version = "6.10.0", features = ["blocking", "native-gnark"] }
-serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+serde_json = "1.0"
 serde = { version = "1.0.200", default-features = false, features = ["derive"] }
 clap = { version = "4.0", features = ["derive", "env"] }
 tracing = "0.1.40"
@@ -39,8 +35,10 @@ mail-parser = "1.0.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 rsa = "0.9.10"
 base64 = "0.22.1"
-alloy-primitives = "1.7.3"
+alloy-primitives = { version = "1.7.3", features = ["serde"] }
 anyhow = "1.0"
+sp1-verifier = "6.10.0"
+sha2 = "0.10"
 
 [dev-dependencies]
 rustls-pki-types = "1.15.1"

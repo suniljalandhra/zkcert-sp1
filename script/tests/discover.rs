@@ -154,7 +154,7 @@ async fn foreign_signing_domain_is_rejected() {
     let eml = sign_with(&keys().pkcs8, "sparkpostmail.com", MESSAGE, false);
     let r = run(&eml, "test._domainkey.sparkpostmail.com", &keys().record).await;
     assert_eq!(r.signatures[0].host_verify, "pass");
-    assert!(!check(&r, "d= is coursera.org/udemy.com"));
+    assert!(!check(&r, "d= is a platform domain"));
     assert_eq!(r.selected, None);
 }
 
@@ -293,8 +293,8 @@ fn wrong_version_is_rejected() {
 #[test]
 fn udemy_lookalike_signing_domain_is_rejected() {
     let mut t = good_tags();
-    t.d = "udemymail.com".into();
-    assert!(failed(&t).contains(&"d= is coursera.org/udemy.com"));
+    t.d = "udemymail.com.evil.io".into();
+    assert!(failed(&t).contains(&"d= is a platform domain"));
 }
 
 #[test]

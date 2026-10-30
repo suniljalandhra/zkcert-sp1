@@ -1,0 +1,17 @@
+{
+  "_comment": "DKIM keys zkCert accepts (the dkimKeyHash allowlist). Public DNS data, fetched 2026-10-31. keyHash = keccak256(SPKI DER of p=). The same list is loaded by the CLI, the server, the web UI and the contract deploy script.",
+  "keys": [
+    {
+      "platform": 1,
+      "name": "scph0616._domainkey.t.mail.coursera.org",
+      "record": "v=DKIM1;h=sha256;k=rsa;p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC4mf9unGnL/SypDMOl1aFxZB8uGp49uSgdgYOrzl3Gp9CnaEOQzhvc/awpFgy7zmxa6Qt9QpQUbN+nI40s550kLERNQoob8h/nYGmptYU22UPKgQU2oAky+fRvE4cNIojc/QeqyH9fkd9PbBthq2sJ7a+JcmcuWBTtjWaT8JQs9wIDAQAB;s=email",
+      "keyHash": "0x34258a3d226293c85b11044d63a85aee881725f9df3400c5dec295b0ac5ce699"
+    },
+    {
+      "platform": 2,
+      "name": "s1._domainkey.e.udemymail.com",
+      "record": "k=rsa; t=s; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyHj29XVWJBxIrNlvQpeSdEkm5Go59tl5rIN1lnobTDpwIrjqbUullAUZMRC0OnZWSB2Zi3VCz3JhvmSYGfa+mr+IJyVXlEUv/zn4CCznUIxX1sFtM3Paiz3TR0uKrWsRuUP1U3eReya8czxdfUZ3X+e5VF2+9TR+LV/6RdABH3QxDN2zaaJgQjjDNyLEqFtPi4LYuB6apycSQqMWOEjJjbfi6IKMzhnL4mgb/j13EDpaywsqi/zpT3j/AabXTH0l1vhXJ9O3JhStGO9yK8STRMFxXpi3+ni7Jgu4jodqjyN+DIqLpEIOb9/yg2/k2+W0Mf5Tawo7T+v3iVyh0YznZwIDAQAB",
+      "keyHash": "0x148b127e51c61a3f7d101bbf429c81e955ce720227d3c091e7b1b32f564a2451"
+    }
+  ]
+}

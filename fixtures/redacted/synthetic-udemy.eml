@@ -1,0 +1,7 @@
+From: Udemy <no-reply@e.udemymail.com>
+To: learner@example.com
+Subject: Your completion certificate is ready for "Tally With Tax"
+Content-Type: text/html; charset=utf-8
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=e.udemymail.com; s=test; h=content-type:from:subject:to; bh=x8/+RrW+YFnTpVKQ61ewSkQJrbocnHFF0bJWq5kl36A=; b=YwAnizrnSW7vhczrZvUV3kXIwdc4vhU+tfYGl981s/jlwrSVjGxCH1hze7SN1h2W2qZjkJo0+TLZvsBS2UdlwRR0slmBpB1lJTF2EZg2M9+2PGTRYqaFMgG2J08kiXWks0KVVJSVHB0UiMQnZdV0HfZiM8YkFk4UK8B3HETN/+6PINByJSRRrA/30LaHTnb+8uXF16c6bf2x6udRRy1W1lIJIREgr5/w8WlLuerZSbr02ZtjXA3o60aPCJkd9g9KUjc7Ia0/RxzTYxgTbOkFHYS0bjQSaJbSbHn1VcqpV/HYNyuFEahhCnpnWzULKp6Fe2kW1bNILBgmEk7L5HF36A==
+
+<html>Hi Learner, congratulations</html>

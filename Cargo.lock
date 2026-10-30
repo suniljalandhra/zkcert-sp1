@@ -598,6 +598,7 @@ dependencies = [
  "matchit",
  "memchr",
  "mime",
+ "multer",
  "percent-encoding",
  "pin-project-lite",
  "serde_core",
@@ -1028,12 +1029,6 @@ dependencies = [
  "unicode-width",
  "windows-sys 0.59.0",
 ]
-
-[[package]]
-name = "const-default"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b396d1f76d455557e1218ec8066ae14bba60b4b36ecd55577ba979f5db7ecaa"
 
 [[package]]
 name = "const-hex"
@@ -1753,18 +1748,6 @@ dependencies = [
  "serdect",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "embedded-alloc"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f2de9133f68db0d4627ad69db767726c99ff8585272716708227008d3f1bddd"
-dependencies = [
- "const-default",
- "critical-section",
- "linked_list_allocator",
- "rlsf",
 ]
 
 [[package]]
@@ -2992,12 +2975,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "linked_list_allocator"
-version = "0.10.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b23ac50abb8261cb38c6e2a7192d3302e0836dac1628f6a93b82b4fad185897"
-
-[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3231,6 +3208,23 @@ checksum = "1e4f6c6e4d1402d11edfb16ead46166411e95a54b0687200b96927fdbba85964"
 dependencies = [
  "typeid_prefix",
  "typeid_suffix",
+]
+
+[[package]]
+name = "multer"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83e87776546dc87511aa5ee218730c92b666d7264ab6ed41f9d215af9cd5224b"
+dependencies = [
+ "bytes",
+ "encoding_rs",
+ "futures-util",
+ "http",
+ "httparse",
+ "memchr",
+ "mime",
+ "spin",
+ "version_check",
 ]
 
 [[package]]
@@ -4571,18 +4565,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rlsf"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07393724337be2ee43a9d86164df4505746874a3fa65913374bc6d6a92314362"
-dependencies = [
- "cfg-if",
- "const-default",
- "libc",
- "rustversion",
-]
-
-[[package]]
 name = "rrs-succinct"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4607,6 +4589,7 @@ dependencies = [
  "pkcs1",
  "pkcs8 0.10.2",
  "rand_core 0.6.4",
+ "sha2 0.10.9",
  "signature 2.2.0",
  "spki 0.7.3",
  "subtle",
@@ -6145,24 +6128,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sp1-zkvm"
-version = "6.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a82fd01010cb37e0a3b1ffdac814641dcb39040f5e4eef86bad5ee1edc9b54d"
-dependencies = [
- "cfg-if",
- "critical-section",
- "embedded-alloc",
- "getrandom 0.2.17",
- "getrandom 0.3.4",
- "libm",
- "rand 0.8.8",
- "sha2 0.10.9",
- "sp1-lib",
- "sp1-primitives",
-]
-
-[[package]]
 name = "spin"
 version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7583,15 +7548,11 @@ name = "zkcert-lib"
 version = "0.1.0"
 dependencies = [
  "alloy-sol-types",
-]
-
-[[package]]
-name = "zkcert-program"
-version = "0.1.0"
-dependencies = [
- "alloy-sol-types",
- "sp1-zkvm",
- "zkcert-lib",
+ "base64 0.22.1",
+ "rsa",
+ "serde",
+ "sha2 0.10.9",
+ "tiny-keccak",
 ]
 
 [[package]]
@@ -7611,8 +7572,10 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sp1-build",
  "sp1-sdk",
+ "sp1-verifier",
  "tokio",
  "tracing",
  "zkcert-lib",
@@ -7622,13 +7585,23 @@ dependencies = [
 name = "zkcert-server"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "anyhow",
  "axum",
+ "dotenv",
  "http-body-util",
+ "rsa",
  "serde",
+ "serde_json",
  "tokio",
  "tower",
+ "tower-http",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+ "zkcert-lib",
+ "zkcert-script",
 ]
 
 [[package]]
