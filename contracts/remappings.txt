@@ -1,0 +1,2 @@
+@sp1-contracts/=lib/sp1-contracts/contracts/src/
+forge-std/=lib/forge-std/src/

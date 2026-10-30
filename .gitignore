@@ -1,0 +1,44 @@
+# Rust
+**/target
+.cargo
+
+# Node / web
+node_modules/
+web/.next/
+web/out/
+
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Real emails are personal data: never commit them. Only fixtures/README.md and
+# fixtures/redacted/ (reviewed, redacted samples) are tracked.
+fixtures/*
+!fixtures/README.md
+!fixtures/redacted/
+*.eml
+*.mbox
+*.msg
+
+# Proof artifacts
+**/proof-with-pis.json
+**/proof-with-io.json
+**/zkcert-proof*.json
+*.proof
+*.bin
+
+# Misc
+.DS_Store
+/tmp
+pgo-data.profdata
+
+# Local notes and assistant files (not part of the project)
+docs/
+CLAUDE.md
+.claude/
