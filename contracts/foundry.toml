@@ -4,6 +4,6 @@ out = "out"
 libs = ["lib"]
 solc_version = "0.8.30"
 # The SP1 script writes proof fixtures here for contract tests.
-fs_permissions = [{ access = "read", path = "./src/fixtures" }]
+fs_permissions = [{ access = "read", path = "./src/fixtures" }, { access = "read", path = "../config" }]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
