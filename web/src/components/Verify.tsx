@@ -60,8 +60,9 @@ export function Verify({ initial, onLoad }: { initial: ProofBundle | null; onLoa
   return (
     <section className="stack">
       <p className="muted">
-        Checks run in your browser: the program vkey and DKIM key allowlist are pinned in this app, and the proof is verified by the SP1 verifier
-        gateway on Base Sepolia with a read-only call. The prover server is not involved.
+        Checks run in your browser: the accepted program versions are pinned in this app (each one only accepts Coursera's and Udemy's pinned DKIM
+        keys, checked inside the proof), and the proof is verified by the SP1 verifier gateway on Base Sepolia with a read-only call. The prover
+        server is not involved.
       </p>
       <div className="drop" onClick={() => input.current?.click()} role="button" tabIndex={0} onDragOver={(e) => e.preventDefault()} onDrop={(e) => (e.preventDefault(), load(e.dataTransfer.files[0]))}>
         <input ref={input} type="file" accept=".json,application/json" hidden onChange={(e) => load(e.target.files?.[0])} />
@@ -78,6 +79,11 @@ export function Verify({ initial, onLoad }: { initial: ProofBundle | null; onLoa
         <div className={`card ${verdict.valid ? 'ok' : 'fail'}`}>
           <h3>{verdict.valid ? '✅ Valid certificate proof' : '❌ Not valid'}</h3>
           {verdict.values && <Claims v={verdict.values} />}
+          {verdict.keyName && (
+            <p className="muted">
+              DKIM key: <span className="mono">{verdict.keyName}</span> (checked inside the proof against the program&apos;s pinned key table)
+            </p>
+          )}
           <ul className="checks">
             {verdict.checks.map((c) => (
               <li key={c.label} className={c.ok ? 'pass' : 'failc'}>

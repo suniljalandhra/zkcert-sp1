@@ -2,6 +2,7 @@
 //!
 //! ```shell
 //! cargo run --release -- execute fixtures/sample.eml            # run the guest, print cycles
+//! cargo run --release -- execute x.eml --no-host-check          # skip host checks (demos)
 //! cargo run --release -- prove fixtures/sample.eml --wallet 0x… # Groth16 proof -> zkcert-proof.json
 //! cargo run --release -- verify zkcert-proof.json               # offline verification
 //! cargo run --release -- vkey                                   # program verification key
@@ -13,13 +14,13 @@ use std::{path::PathBuf, process::ExitCode};
 use alloy_primitives::Address;
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
-use zkcert_lib::PublicValues;
+use zkcert_lib::{keys::KEYS, PublicValues};
 use zkcert_script::{
     bundle::{verify_bundle, Decoded, ProofBundle},
     discover::KeySource,
-    inputs::{prepare, Prepared},
+    inputs::{guest_input, prepare, Prepared},
     keys,
-    prover::{pinned_vkey, program_vkey, ZkProver},
+    prover::{accepted_vkeys, program_vkey, ZkProver},
     synth,
 };
 
@@ -33,7 +34,14 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Run the guest without proving and print the cycle count.
-    Execute(EmailArgs),
+    Execute {
+        #[command(flatten)]
+        email: EmailArgs,
+        /// Skip the host's copy of the guest checks and run the guest directly, to show what the
+        /// guest itself rejects (an email it rejects exits non-zero, so no proof can exist).
+        #[arg(long)]
+        no_host_check: bool,
+    },
     /// Generate a Groth16 proof and write a proof bundle.
     Prove {
         #[command(flatten)]
@@ -41,7 +49,7 @@ enum Cmd {
         #[arg(long, default_value = "zkcert-proof.json")]
         out: PathBuf,
     },
-    /// Verify a proof bundle offline (vkey, key allowlist, Groth16 proof).
+    /// Verify a proof bundle offline (accepted program vkey, Groth16 proof).
     Verify {
         bundle: PathBuf,
         /// Accept bundles made with SP1_PROVER=mock (they contain no real proof).
@@ -50,7 +58,9 @@ enum Cmd {
     },
     /// Print the program verification key.
     Vkey {
-        /// Also pin it in config/program.json (read by `verify`, the web UI and the deploy).
+        /// Also pin it in config/program.json as the current version and add it to `accepted`
+        /// (read by `verify`, the web UI and the deploy). Older versions stay accepted until
+        /// removed from `accepted` by hand.
         #[arg(long)]
         write: bool,
     },
@@ -72,19 +82,18 @@ struct EmailArgs {
     /// Reveal the course name in the public values.
     #[arg(long)]
     disclose: bool,
-    /// Fetch DKIM keys from live DNS instead of config/dkim-keys.json.
+    /// Fetch DKIM key records from live DNS instead of config/dkim-keys.json. The guest still
+    /// accepts only the keys compiled into it.
     #[arg(long, conflicts_with = "key")]
     dns: bool,
-    /// Use this key record instead of the allowlist: `<selector>._domainkey.<domain>=<file>`.
-    /// The proof is still produced; verifiers reject it unless the key is allowlisted.
+    /// Use this key record instead of config/dkim-keys.json: `<selector>._domainkey.<domain>=<file>`.
+    /// The guest rejects it unless the key is in its compiled table (lib/src/keys.rs).
     #[arg(long, value_name = "NAME=FILE")]
     key: Vec<String>,
 }
 
-fn load(args: &EmailArgs) -> Result<Prepared> {
-    let raw =
-        std::fs::read(&args.eml).with_context(|| format!("reading {}", args.eml.display()))?;
-    let keys = if args.dns {
+fn key_source(args: &EmailArgs) -> Result<KeySource> {
+    Ok(if args.dns {
         KeySource::Dns
     } else if !args.key.is_empty() {
         let mut map = std::collections::HashMap::new();
@@ -98,11 +107,19 @@ fn load(args: &EmailArgs) -> Result<Prepared> {
         KeySource::Pinned(map)
     } else {
         keys::pinned_source()
-    };
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(prepare(
+    })
+}
+
+fn read_eml(args: &EmailArgs) -> Result<Vec<u8>> {
+    std::fs::read(&args.eml).with_context(|| format!("reading {}", args.eml.display()))
+}
+
+fn load(args: &EmailArgs) -> Result<Prepared> {
+    let (raw, keys) = (read_eml(args)?, key_source(args)?);
+    tokio::runtime::Runtime::new()?.block_on(prepare(
         &raw,
         &keys,
+        KEYS,
         args.wallet.into_array(),
         args.disclose,
     ))
@@ -113,11 +130,11 @@ fn print_values(v: &PublicValues) {
         "{}",
         serde_json::to_string_pretty(&Decoded::from(v)).unwrap()
     );
-    if keys::lookup(v.platform, v.dkimKeyHash).is_none() {
-        println!(
-            "warning: DKIM key {} is not on the allowlist",
-            v.dkimKeyHash
-        );
+    if let Some(k) = KEYS
+        .iter()
+        .find(|k| k.key_hash == v.dkimKeyHash.0 && k.platform == v.platform)
+    {
+        println!("key: {}", k.name);
     }
 }
 
@@ -125,12 +142,31 @@ fn run() -> Result<()> {
     dotenv::dotenv().ok();
     sp1_sdk::utils::setup_logger();
     match Cli::parse().cmd {
-        Cmd::Execute(args) => {
-            let p = load(&args)?;
+        Cmd::Execute {
+            email,
+            no_host_check: false,
+        } => {
+            let p = load(&email)?;
             let (values, cycles) = ZkProver::from_env()?.execute(&p.input)?;
             if values != p.expected {
                 bail!("guest output differs from host verification");
             }
+            print_values(&values);
+            println!("cycles: {cycles}");
+        }
+        Cmd::Execute {
+            email,
+            no_host_check: true,
+        } => {
+            let (raw, keys) = (read_eml(&email)?, key_source(&email)?);
+            let input = tokio::runtime::Runtime::new()?.block_on(guest_input(
+                &raw,
+                &keys,
+                email.wallet.into_array(),
+                email.disclose,
+            ))?;
+            println!("host checks skipped; running the SP1 guest");
+            let (values, cycles) = ZkProver::from_env()?.execute(&input)?;
             print_values(&values);
             println!("cycles: {cycles}");
         }
@@ -149,7 +185,7 @@ fn run() -> Result<()> {
         Cmd::Verify { bundle, allow_mock } => {
             let b: ProofBundle =
                 serde_json::from_slice(&std::fs::read(&bundle)?).context("not a zkcert bundle")?;
-            let values = verify_bundle(&b, &pinned_vkey()?, &keys::allowlist(), allow_mock)?;
+            let values = verify_bundle(&b, &accepted_vkeys()?, allow_mock)?;
             print_values(&values);
             println!("VALID ({})", b.proof_system);
         }
@@ -158,7 +194,12 @@ fn run() -> Result<()> {
             println!("{vkey}");
             if write {
                 let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../config/program.json");
-                std::fs::write(path, format!("{{\n  \"vkey\": \"{vkey}\"\n}}\n"))?;
+                let mut accepted = accepted_vkeys()?;
+                if !accepted.iter().any(|v| v.eq_ignore_ascii_case(&vkey)) {
+                    accepted.push(vkey.clone());
+                }
+                let json = serde_json::json!({ "vkey": vkey, "accepted": accepted });
+                std::fs::write(path, serde_json::to_string_pretty(&json)? + "\n")?;
                 println!("pinned in config/program.json (rebuild to embed it)");
             }
         }

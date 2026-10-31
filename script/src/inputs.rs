@@ -6,7 +6,8 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use zkcert_lib::{
     canon::{self, RawHeader},
     dkim::{parse_tag_list, DkimTags},
-    verify::{verify, GuestInput},
+    keys::PinnedKey,
+    verify::{verify_with, GuestInput},
     PublicValues,
 };
 
@@ -46,12 +47,29 @@ pub struct Prepared {
     pub expected: PublicValues,
 }
 
+/// The guest input plus the values the guest will commit. `table` is the guest's key table
+/// (`zkcert_lib::keys::KEYS` everywhere but tests), so an email the guest would reject fails here
+/// in milliseconds instead of in the prover.
 pub async fn prepare(
+    raw: &[u8],
+    keys: &KeySource,
+    table: &[PinnedKey],
+    wallet: [u8; 20],
+    disclose: bool,
+) -> Result<Prepared> {
+    let input = guest_input(raw, keys, wallet, disclose).await?;
+    let expected =
+        verify_with(&input, table).map_err(|e| anyhow!("guest check would fail: {e}"))?;
+    Ok(Prepared { input, expected })
+}
+
+/// The guest input for the platform signature, without running the guest's checks.
+pub async fn guest_input(
     raw: &[u8],
     keys: &KeySource,
     wallet: [u8; 20],
     disclose: bool,
-) -> Result<Prepared> {
+) -> Result<GuestInput> {
     let raw = normalize_crlf(raw);
     let report = analyze(&raw, keys).await?;
     let sig = report
@@ -70,16 +88,14 @@ pub async fn prepare(
         .filter(|h| !std::ptr::eq(*h, dkim))
         .cloned()
         .collect();
-    let input = GuestInput {
+    Ok(GuestInput {
         headers: canon::signed_headers(header_c, &others, &tags.h, dkim),
         body: canon::body(body_c, body),
         signature: B64.decode(&tags.b).context("b= is not base64")?,
         public_key_der: key_der(&key.record)?,
         wallet,
         disclose,
-    };
-    let expected = verify(&input).map_err(|e| anyhow!("guest check would fail: {e}"))?;
-    Ok(Prepared { input, expected })
+    })
 }
 
 fn find_dkim<'a>(headers: &'a [RawHeader], want: &DkimTags) -> Result<&'a RawHeader> {
@@ -108,7 +124,7 @@ pub fn rejection(report: &crate::discover::Report) -> String {
     }
     if let Err(e) = &sig.key {
         if e.starts_with("no pinned key") {
-            return "the signing key is not on the zkCert allowlist (config/dkim-keys.json)".into();
+            return "the signing key is not one zkCert accepts (no record in config/dkim-keys.json)".into();
         }
         return format!("signing key not accepted: {e}");
     }

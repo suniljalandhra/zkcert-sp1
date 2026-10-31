@@ -12,11 +12,27 @@ use crate::bundle::ProofBundle;
 
 pub const ZKCERT_ELF: Elf = include_elf!("zkcert-program");
 
-/// The published vkey verifiers accept (config/program.json, written by `zkcert vkey --write`).
+const PROGRAM_JSON: &str = include_str!("../../config/program.json");
+
+/// The vkey of the current program (config/program.json `vkey`, written by `zkcert vkey --write`).
 /// Comparing against this, not the locally built ELF, means a modified build is not trusted.
 pub fn pinned_vkey() -> Result<String> {
-    let v: serde_json::Value = serde_json::from_str(include_str!("../../config/program.json"))?;
+    let v: serde_json::Value = serde_json::from_str(PROGRAM_JSON)?;
     Ok(v["vkey"].as_str().unwrap_or_default().to_string())
+}
+
+/// Every program version verifiers accept (config/program.json `accepted`). A key-table change
+/// is a new version; an old one stays accepted until it is removed here (and in the registry).
+pub fn accepted_vkeys() -> Result<Vec<String>> {
+    let v: serde_json::Value = serde_json::from_str(PROGRAM_JSON)?;
+    Ok(v["accepted"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 /// The program verification key (bytes32 hex). It depends only on the ELF.

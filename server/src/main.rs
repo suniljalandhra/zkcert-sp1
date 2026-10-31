@@ -30,7 +30,10 @@ use serde::Serialize;
 use serde_json::json;
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tower_http::cors::CorsLayer;
-use zkcert_lib::verify::GuestInput;
+use zkcert_lib::{
+    keys::{PinnedKey, KEYS},
+    verify::GuestInput,
+};
 use zkcert_script::{
     bundle::{Decoded, ProofBundle},
     discover::KeySource,
@@ -60,7 +63,10 @@ struct AppState {
     /// False once prover setup has failed; uploads are then refused before any email is read.
     prover_ok: AtomicBool,
     queue: mpsc::Sender<(String, GuestInput)>,
-    allowlist: Vec<KnownKey>,
+    /// Key records for building guest inputs (config/dkim-keys.json).
+    records: Vec<KnownKey>,
+    /// The guest's key table, so a key the guest would reject is refused before proving.
+    table: Vec<PinnedKey>,
     vkey: String,
 }
 
@@ -160,11 +166,20 @@ async fn vkey(State(s): State<Shared>) -> Json<serde_json::Value> {
     Json(json!({ "vkey": s.vkey }))
 }
 
+/// The keys the guest accepts (its compiled table), with their validity windows.
 async fn list_keys(State(s): State<Shared>) -> Json<serde_json::Value> {
     let keys: Vec<_> = s
-        .allowlist
+        .table
         .iter()
-        .map(|k| json!({ "platform": k.platform, "name": k.name, "keyHash": k.key_hash }))
+        .map(|k| {
+            json!({
+                "platform": k.platform,
+                "name": k.name,
+                "keyHash": alloy_primitives::B256::from(k.key_hash),
+                "validFrom": k.valid_from,
+                "validTo": k.valid_to,
+            })
+        })
         .collect();
     Json(json!({ "keys": keys }))
 }
@@ -204,14 +219,14 @@ async fn submit(
     if wallet == Address::ZERO {
         return Err(bad("wallet must not be the zero address"));
     }
-    // Only allowlisted keys, never DNS: the proof is only useful if verifiers accept the key.
+    // Only pinned key records, never DNS; the guest's own key table is checked by `prepare`.
     let source = KeySource::Pinned(
-        s.allowlist
+        s.records
             .iter()
             .map(|k| (k.name.clone(), k.record.clone()))
             .collect(),
     );
-    let prepared = prepare(&eml, &source, wallet.into_array(), disclose)
+    let prepared = prepare(&eml, &source, &s.table, wallet.into_array(), disclose)
         .await
         .map_err(|e| bad(format!("{e:#}")))?;
     drop(eml);
@@ -254,7 +269,8 @@ fn app(state: Shared, cors_origin: &str) -> Router {
 }
 
 fn new_state(
-    allowlist: Vec<KnownKey>,
+    records: Vec<KnownKey>,
+    table: Vec<PinnedKey>,
     vkey: String,
     make: impl FnOnce() -> Result<ProveFn> + Send + 'static,
 ) -> Shared {
@@ -263,7 +279,8 @@ fn new_state(
         jobs: Mutex::new(HashMap::new()),
         prover_ok: AtomicBool::new(true),
         queue: tx,
-        allowlist,
+        records,
+        table,
         vkey,
     });
     spawn_worker(state.clone(), rx, make);
@@ -297,7 +314,7 @@ async fn main() {
         panic!("program vkey {vkey} != pinned {pinned}: rebuild, or run `zkcert vkey --write`");
     }
     tracing::info!(%vkey, prover = %std::env::var("SP1_PROVER").unwrap_or_else(|_| "cpu".into()), "program loaded");
-    let state = new_state(keys::allowlist(), vkey, || {
+    let state = new_state(keys::allowlist(), KEYS.to_vec(), vkey, || {
         let prover = ZkProver::from_env()?;
         Ok(Box::new(move |input: &GuestInput| prover.prove(input)) as ProveFn)
     });
@@ -321,16 +338,30 @@ mod tests {
     use axum::{body::Body, http::Request};
     use http_body_util::BodyExt;
     use tower::ServiceExt;
-    use zkcert_lib::{verify::verify, PublicValues};
+    use zkcert_lib::{
+        verify::{keccak, verify_with},
+        PublicValues,
+    };
     use zkcert_script::{discover::key_info, synth};
 
     const WALLET: &str = "0x1234567890123456789012345678901234567890";
 
-    /// A server whose allowlist holds one throwaway key, with a fake prover that returns a mock
-    /// bundle of the values the guest would commit.
+    /// A test key table entry: platform Udemy, no time window.
+    fn pinned(der: &[u8]) -> PinnedKey {
+        PinnedKey {
+            name: "test",
+            platform: 2,
+            key_hash: keccak(&[der]),
+            valid_from: 0,
+            valid_to: u64::MAX,
+        }
+    }
+
+    /// A server whose records and key table hold one throwaway key, with a fake prover that
+    /// returns a mock bundle of the values the guest would commit.
     fn mock_prover() -> Result<ProveFn> {
         Ok(Box::new(|input: &GuestInput| {
-            let v = verify(input)?;
+            let v = verify_with(input, &[pinned(&input.public_key_der)])?;
             ProofBundle::new("mock", "0xvkey".into(), &[], &PublicValues::abi_encode(&v))
         }) as ProveFn)
     }
@@ -340,6 +371,13 @@ mod tests {
     }
 
     fn test_app_with(make: impl FnOnce() -> Result<ProveFn> + Send + 'static) -> (Router, Vec<u8>) {
+        test_app_table(make, true)
+    }
+
+    fn test_app_table(
+        make: impl FnOnce() -> Result<ProveFn> + Send + 'static,
+        key_in_table: bool,
+    ) -> (Router, Vec<u8>) {
         let key = rsa::RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 1024).unwrap();
         let mail = synth::udemy();
         let record = synth::record(&key);
@@ -349,7 +387,13 @@ mod tests {
             key_hash: key_info(&record).unwrap().der_keccak,
             record,
         };
-        let state = new_state(vec![known], "0xvkey".into(), make);
+        let der = zkcert_script::inputs::key_der(&known.record).unwrap();
+        let table = if key_in_table {
+            vec![pinned(&der)]
+        } else {
+            vec![]
+        };
+        let state = new_state(vec![known], table, "0xvkey".into(), make);
         (
             app(state, "http://localhost:3000"),
             synth::sign(&mail, &key),
@@ -562,7 +606,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_key_not_on_allowlist() {
+    async fn rejects_key_without_record() {
         let (app, _) = test_app();
         let other = rsa::RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 1024).unwrap();
         let (status, _) = call(
@@ -571,6 +615,18 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn rejects_key_missing_from_guest_table() {
+        // The host has the key record, but the guest's table does not list the key.
+        let (app, eml) = test_app_table(mock_prover, false);
+        let (status, body) = call(&app, multipart(&eml, WALLET)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"].as_str().unwrap().contains("key table"),
+            "{body}"
+        );
     }
 
     #[tokio::test]

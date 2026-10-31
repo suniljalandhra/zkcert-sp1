@@ -38,9 +38,10 @@ export function Mint({ bundle }: { bundle: ProofBundle | null }) {
         await switchChainAsync({ chainId: baseSepolia.id })
       }
       setState({ k: 'pending', msg: 'Simulating…' })
-      await client!.simulateContract({ address: registry, abi: registryAbi, functionName: 'claim', args: [bundle.publicValues, bundle.proof], account: address })
+      const args = [bundle.vkey, bundle.publicValues, bundle.proof] as const
+      await client!.simulateContract({ address: registry, abi: registryAbi, functionName: 'claim', args, account: address })
       setState({ k: 'pending', msg: 'Confirm in your wallet…' })
-      const tx = await writeContractAsync({ address: registry, abi: registryAbi, functionName: 'claim', args: [bundle.publicValues, bundle.proof], chainId: baseSepolia.id })
+      const tx = await writeContractAsync({ address: registry, abi: registryAbi, functionName: 'claim', args, chainId: baseSepolia.id })
       setState({ k: 'pending', msg: 'Waiting for confirmation…' })
       const receipt = await client!.waitForTransactionReceipt({ hash: tx })
       if (receipt.status !== 'success') throw new Error('Transaction reverted.')
@@ -62,7 +63,7 @@ export function Mint({ bundle }: { bundle: ProofBundle | null }) {
   return (
     <section className="stack">
       <p className="muted">
-        Records the certificate as an EAS attestation to the bound wallet. The registry verifies the proof again, checks the key allowlist, and that
+        Records the certificate as an EAS attestation to the bound wallet. The registry verifies the proof again, checks it is from an accepted program version, and that
         this certificate (nullifier) was not claimed before. The recipient wallet becomes public on-chain.
       </p>
       <p>

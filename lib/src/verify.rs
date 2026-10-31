@@ -2,8 +2,8 @@
 //! calls the same function first so a bad email fails in milliseconds instead of in the prover.
 //!
 //! Every input is untrusted. The signed-header blob and the body are trusted only because the
-//! RSA signature and `bh=` bind them to the key, and the key only because `dkimKeyHash` is
-//! checked against an allowlist by the verifier (contract or UI).
+//! RSA signature and `bh=` bind them to the key, and the key only because it is in the pinned
+//! table compiled into the program ([`crate::keys::KEYS`]), for that platform and signing time.
 
 use std::fmt;
 
@@ -16,6 +16,7 @@ use tiny_keccak::{Hasher, Keccak};
 
 use crate::{
     dkim::DkimTags,
+    keys::{PinnedKey, KEYS},
     mime,
     platform::{coursera, normalize_ws, udemy, Platform},
     PublicValues,
@@ -53,6 +54,10 @@ pub enum VerifyError {
     HeaderCount(&'static str),
     BodyHash,
     Key(&'static str),
+    /// The key is not in the pinned table for the signing domain's platform.
+    UnknownKey,
+    /// The signed `t=` is outside the key's validity window (or absent for a bounded key).
+    KeyWindow,
     Signature,
     FromDomain,
     NotCertificateEmail,
@@ -69,6 +74,10 @@ impl fmt::Display for VerifyError {
             VerifyError::HeaderCount(h) => write!(f, "expected exactly one signed {h} header"),
             VerifyError::BodyHash => write!(f, "body hash does not match bh= (body edited)"),
             VerifyError::Key(w) => write!(f, "public key: {w}"),
+            VerifyError::UnknownKey => write!(f, "DKIM key is not on the zkCert key table"),
+            VerifyError::KeyWindow => {
+                write!(f, "signing time t= is outside the key's validity window")
+            }
             VerifyError::Signature => {
                 write!(f, "RSA signature invalid (headers edited or wrong key)")
             }
@@ -108,7 +117,25 @@ pub fn single_address(value: &str) -> Option<String> {
     ok.then(|| addr.to_string())
 }
 
+/// The proof statement with the production key table.
+/// `keccak("zkcert-v1", platform, courseHash, keccak(lowercase To))`. Every accepted program version
+/// must derive it identically: the registry's once-per-certificate rule across versions depends on it
+/// (pinned by `nullifier_test_vector`).
+pub fn nullifier(platform: u8, course_hash: &[u8; 32], to_addr: &str) -> [u8; 32] {
+    keccak(&[
+        NULLIFIER_DOMAIN,
+        &[platform],
+        course_hash,
+        &keccak(&[to_addr.to_ascii_lowercase().as_bytes()]),
+    ])
+}
+
 pub fn verify(input: &GuestInput) -> Result<PublicValues, VerifyError> {
+    verify_with(input, KEYS)
+}
+
+/// The proof statement against `keys`. Only tests pass anything but [`KEYS`]; the guest cannot.
+pub fn verify_with(input: &GuestInput, keys: &[PinnedKey]) -> Result<PublicValues, VerifyError> {
     // 1. The DKIM-Signature header is the last field of the hash input (§3.7).
     let blob = std::str::from_utf8(&input.headers)
         .map_err(|_| VerifyError::Malformed("headers not UTF-8"))?;
@@ -188,7 +215,17 @@ pub fn verify(input: &GuestInput) -> Result<PublicValues, VerifyError> {
         return Err(VerifyError::BodyHash);
     }
 
-    // 4. RSA PKCS#1 v1.5 over SHA-256 of the header hash input.
+    // 4. The key is pinned for this platform, and the signing time is inside its window.
+    let key_hash = keccak(&[&input.public_key_der]);
+    let pinned = keys
+        .iter()
+        .find(|k| k.key_hash == key_hash && k.platform == platform as u8)
+        .ok_or(VerifyError::UnknownKey)?;
+    if !pinned.accepts_time(tags.t) {
+        return Err(VerifyError::KeyWindow);
+    }
+
+    // 5. RSA PKCS#1 v1.5 over SHA-256 of the header hash input.
     let key = RsaPublicKey::from_public_key_der(&input.public_key_der)
         .map_err(|_| VerifyError::Key("not an RSA SPKI DER"))?;
     if key.n().bits() < 1024 {
@@ -198,18 +235,20 @@ pub fn verify(input: &GuestInput) -> Result<PublicValues, VerifyError> {
     key.verify(Pkcs1v15Sign::new::<Sha256>(), &digest, &input.signature)
         .map_err(|_| VerifyError::Signature)?;
 
-    // 5. The signed From belongs to the same platform as d=.
+    // 6. The signed From belongs to the same platform as d=.
     let from_addr = single_address(from).ok_or(VerifyError::HeaderCount("from mailbox"))?;
     let from_domain = from_addr.rsplit_once('@').map_or("", |(_, d)| d);
     if Platform::from_domain(from_domain) != Some(platform) {
         return Err(VerifyError::FromDomain);
     }
 
-    // 6. Platform parser.
+    // 7. Platform parser.
     let subject = mime::decode_words(subject).ok_or(VerifyError::Malformed("subject encoding"))?;
     let course = match platform {
         Platform::Coursera => {
-            if normalize_ws(&subject) != coursera::SUBJECT {
+            // Cheap rejection before MIME parsing: the subject must be a known template's.
+            let subject = normalize_ws(&subject);
+            if !coursera::TEMPLATES.iter().any(|t| t.subject == subject) {
                 return Err(VerifyError::NotCertificateEmail);
             }
             let ctype =
@@ -218,7 +257,7 @@ pub fn verify(input: &GuestInput) -> Result<PublicValues, VerifyError> {
                 mime::param(ctype, "boundary").ok_or(VerifyError::NotCertificateEmail)?;
             let text = mime::text_plain_part(&input.body, &boundary)
                 .ok_or(VerifyError::NotCertificateEmail)?;
-            coursera::parse(&text)
+            coursera::parse(coursera::TEMPLATES, &subject, &text)
                 .ok_or(VerifyError::NotCertificateEmail)?
                 .course_name
         }
@@ -227,17 +266,10 @@ pub fn verify(input: &GuestInput) -> Result<PublicValues, VerifyError> {
         }
     };
 
-    // 7. Public values.
-    let to_addr = single_address(to)
-        .ok_or(VerifyError::HeaderCount("to mailbox"))?
-        .to_ascii_lowercase();
+    // 8. Public values.
+    let to_addr = single_address(to).ok_or(VerifyError::HeaderCount("to mailbox"))?;
     let course_hash = keccak(&[course.as_bytes()]);
-    let nullifier = keccak(&[
-        NULLIFIER_DOMAIN,
-        &[platform as u8],
-        &course_hash,
-        &keccak(&[to_addr.as_bytes()]),
-    ]);
+    let nullifier = nullifier(platform as u8, &course_hash, &to_addr);
     Ok(PublicValues {
         platform: platform as u8,
         courseHash: FixedBytes(course_hash),
@@ -246,9 +278,10 @@ pub fn verify(input: &GuestInput) -> Result<PublicValues, VerifyError> {
         } else {
             String::new()
         },
-        // Day precision: the exact signing second could link a wallet to platform send logs.
-        completedAt: tags.t.map_or(0, |t| t - t % DAY),
-        dkimKeyHash: FixedBytes(keccak(&[&input.public_key_der])),
+        // When the platform signed the email, not when the course was finished. Day precision:
+        // the exact signing second could link a wallet to platform send logs.
+        emailSignedAt: tags.t.map_or(0, |t| t - t % DAY),
+        dkimKeyHash: FixedBytes(key_hash),
         nullifier: FixedBytes(nullifier),
         wallet: Address::from(input.wallet),
     })
@@ -257,6 +290,20 @@ pub fn verify(input: &GuestInput) -> Result<PublicValues, VerifyError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nullifier_test_vector() {
+        // Fixed across program versions; changing it would let a certificate be claimed again.
+        let n = nullifier(1, &keccak(&[b"Machine Learning"]), "Some.One@Example.com");
+        assert_eq!(
+            n,
+            nullifier(1, &keccak(&[b"Machine Learning"]), "some.one@example.com")
+        );
+        assert_eq!(
+            n.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+            "5be87e49d5740a1cce2f4e77ff9c8ab1d0a62f17cec40952591a955f87336b6b"
+        );
+    }
 
     #[test]
     fn addresses() {

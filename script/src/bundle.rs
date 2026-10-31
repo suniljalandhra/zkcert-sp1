@@ -1,12 +1,10 @@
 //! `zkcert-proof.json`: the downloadable proof bundle, and its offline verification.
 
-use alloy_primitives::{hex, B256};
+use alloy_primitives::hex;
 use alloy_sol_types::SolType;
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use zkcert_lib::PublicValues;
-
-use crate::keys::KnownKey;
 
 pub const BUNDLE_VERSION: &str = "zkcert-v1";
 pub const SP1_VERSION: &str = "6.10.0";
@@ -18,7 +16,7 @@ pub struct Decoded {
     pub platform_id: u8,
     pub course_hash: String,
     pub course_name: String,
-    pub completed_at: u64,
+    pub email_signed_at: u64,
     pub dkim_key_hash: String,
     pub nullifier: String,
     pub wallet: String,
@@ -36,7 +34,7 @@ impl From<&PublicValues> for Decoded {
             platform_id: v.platform,
             course_hash: v.courseHash.to_string(),
             course_name: v.courseName.clone(),
-            completed_at: v.completedAt,
+            email_signed_at: v.emailSignedAt,
             dkim_key_hash: v.dkimKeyHash.to_string(),
             nullifier: v.nullifier.to_string(),
             wallet: v.wallet.to_checksum(None),
@@ -75,10 +73,12 @@ impl ProofBundle {
 }
 
 /// Everything a verifier must check, in order. Returns the trusted public values.
+///
+/// The DKIM key is not checked here: each accepted program version only accepts the keys in its
+/// own compiled table, so accepting the vkey is accepting that table.
 pub fn verify_bundle(
     b: &ProofBundle,
-    expected_vkey: &str,
-    allowlist: &[KnownKey],
+    accepted_vkeys: &[String],
     allow_mock: bool,
 ) -> Result<PublicValues> {
     ensure!(
@@ -87,8 +87,10 @@ pub fn verify_bundle(
         b.version
     );
     ensure!(
-        b.vkey.eq_ignore_ascii_case(expected_vkey),
-        "vkey {} is not the zkCert program ({expected_vkey}): the proof is for a different program",
+        accepted_vkeys
+            .iter()
+            .any(|v| v.eq_ignore_ascii_case(&b.vkey)),
+        "vkey {} is not an accepted zkCert program version: the proof is for a different program",
         b.vkey
     );
     let pv = hex::decode(&b.public_values).context("publicValues is not hex")?;
@@ -96,14 +98,6 @@ pub fn verify_bundle(
     ensure!(
         Decoded::from(&values) == b.decoded,
         "decoded fields do not match publicValues"
-    );
-    let key: B256 = values.dkimKeyHash;
-    ensure!(
-        allowlist
-            .iter()
-            .any(|k| k.key_hash == key && k.platform == values.platform),
-        "DKIM key {key} is not on the allowlist for platform {}",
-        values.platform
     );
     match b.proof_system.as_str() {
         "groth16" => {

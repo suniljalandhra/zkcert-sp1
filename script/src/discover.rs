@@ -315,7 +315,7 @@ pub async fn analyze(raw: &[u8], keys: &KeySource) -> Result<Report> {
 
     let selected = signatures.iter().position(|s| s.usable());
     let coursera = match selected.and_then(|i| signatures[i].platform()) {
-        Some(Platform::Coursera) => coursera::parse(&body_text),
+        Some(Platform::Coursera) => coursera::parse(coursera::TEMPLATES, &subject, &body_text),
         _ => None,
     };
 

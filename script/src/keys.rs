@@ -1,5 +1,6 @@
-//! The DKIM key allowlist (config/dkim-keys.json). A proof is only meaningful if its
-//! `dkimKeyHash` is one of these keys: DNS answers are untrusted and keys rotate.
+//! The DKIM key records (config/dkim-keys.json) the host needs to build guest inputs. What the
+//! proof accepts is decided by the table compiled into the guest (`zkcert_lib::keys::KEYS`);
+//! a test below keeps the two in step. DNS answers are untrusted and keys rotate.
 
 use std::collections::HashMap;
 
@@ -32,13 +33,6 @@ pub fn allowlist() -> Vec<KnownKey> {
         .keys
 }
 
-/// The allowlisted key with this hash, if it belongs to `platform`.
-pub fn lookup(platform: u8, key_hash: B256) -> Option<KnownKey> {
-    allowlist()
-        .into_iter()
-        .find(|k| k.key_hash == key_hash && k.platform == platform)
-}
-
 /// Resolve keys from the allowlist only (no DNS): reproducible and immune to key rotation.
 pub fn pinned_source() -> KeySource {
     KeySource::Pinned(
@@ -53,6 +47,24 @@ pub fn pinned_source() -> KeySource {
 mod tests {
     use super::*;
     use crate::discover::key_info;
+
+    #[test]
+    fn records_match_guest_table() {
+        let mut json: Vec<_> = allowlist()
+            .into_iter()
+            .map(|k| (k.platform, k.key_hash.0, k.name))
+            .collect();
+        let mut table: Vec<_> = zkcert_lib::keys::KEYS
+            .iter()
+            .map(|k| (k.platform, k.key_hash, k.name.to_string()))
+            .collect();
+        json.sort();
+        table.sort();
+        assert_eq!(
+            json, table,
+            "config/dkim-keys.json and lib/src/keys.rs disagree"
+        );
+    }
 
     #[test]
     fn hashes_match_records() {

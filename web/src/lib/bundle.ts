@@ -6,7 +6,7 @@ export type Decoded = {
   platformId: number
   courseHash: Hex
   courseName: string
-  completedAt: number
+  emailSignedAt: number
   dkimKeyHash: Hex
   nullifier: Hex
   wallet: Address
@@ -26,7 +26,7 @@ export type PublicValues = {
   platform: number
   courseHash: Hex
   courseName: string
-  completedAt: bigint
+  emailSignedAt: bigint
   dkimKeyHash: Hex
   nullifier: Hex
   wallet: Address
@@ -40,7 +40,7 @@ export const PUBLIC_VALUES_ABI = [
       { name: 'platform', type: 'uint8' },
       { name: 'courseHash', type: 'bytes32' },
       { name: 'courseName', type: 'string' },
-      { name: 'completedAt', type: 'uint64' },
+      { name: 'emailSignedAt', type: 'uint64' },
       { name: 'dkimKeyHash', type: 'bytes32' },
       { name: 'nullifier', type: 'bytes32' },
       { name: 'wallet', type: 'address' },
@@ -72,7 +72,7 @@ export function parseBundle(text: string): ProofBundle {
 
 export function summary(v: PublicValues, platformName: string): string {
   const course = v.courseName || '(course name hidden)'
-  const when = v.completedAt > 0n ? ` on ${new Date(Number(v.completedAt) * 1000).toISOString().slice(0, 10)}` : ''
+  const when = v.emailSignedAt > 0n ? ` (certificate email signed ${new Date(Number(v.emailSignedAt) * 1000).toISOString().slice(0, 10)})` : ''
   return `zkCert: completed ${course} on ${platformName}${when}. Bound to ${v.wallet}.`
 }
 

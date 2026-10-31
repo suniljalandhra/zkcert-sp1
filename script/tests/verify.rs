@@ -1,6 +1,10 @@
 //! Positive and negative tests for the guest statement (`zkcert_lib::verify`), using synthetic
 //! emails signed with a key generated at test time, plus the real fixtures when present
 //! (they are git-ignored, so those tests skip on a fresh clone).
+//!
+//! Synthetic keys are not in the production key table, so most tests use [`verify`] below, which
+//! runs the statement with a table trusting the input's key; the key-table tests use the real
+//! table or explicit windows.
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use rsa::{pkcs8::EncodePublicKey, rand_core::OsRng, RsaPrivateKey};
@@ -11,7 +15,9 @@ use sp1_sdk::{
 use zkcert_lib::{
     canon::{self, Canon},
     dkim::DkimTags,
-    verify::{keccak, verify, GuestInput, VerifyError, NULLIFIER_DOMAIN},
+    keys::{PinnedKey, KEYS},
+    verify::{self as statement, keccak, verify_with, GuestInput, VerifyError, NULLIFIER_DOMAIN},
+    PublicValues,
 };
 use zkcert_script::{
     inputs::prepare,
@@ -20,6 +26,40 @@ use zkcert_script::{
 };
 
 const ELF: Elf = include_elf!("zkcert-program");
+
+/// A table entry for `der` on `platform` with the window `[from, to)`.
+fn pinned(der: &[u8], platform: u8, from: u64, to: u64) -> PinnedKey {
+    PinnedKey {
+        name: "test",
+        platform,
+        key_hash: keccak(&[der]),
+        valid_from: from,
+        valid_to: to,
+    }
+}
+
+/// The statement with a table that trusts the input's key, unbounded, for both platforms.
+fn verify(input: &GuestInput) -> Result<PublicValues, VerifyError> {
+    let der = &input.public_key_der;
+    verify_with(
+        input,
+        &[pinned(der, 1, 0, u64::MAX), pinned(der, 2, 0, u64::MAX)],
+    )
+}
+
+/// Runs the real guest ELF; true if it ran and exited non-zero (then no valid proof can exist).
+/// An executor error (ELF not loading, bad stdin) fails the test instead of counting as a rejection.
+/// Callers also assert the host `verify` error, so the rejection reason is known.
+fn guest_rejects(input: &GuestInput) -> bool {
+    let mut stdin = SP1Stdin::new();
+    stdin.write(input);
+    let client = ProverClient::builder().mock().build();
+    let (_, report) = client
+        .execute(ELF, stdin)
+        .run()
+        .expect("executor error, not a guest rejection");
+    report.exit_code != 0
+}
 
 fn key() -> RsaPrivateKey {
     RsaPrivateKey::new(&mut OsRng, 1024).unwrap()
@@ -69,7 +109,7 @@ fn valid_coursera() {
     assert_eq!(v.platform, 1);
     assert_eq!(v.courseName, "Machine Learning");
     // t=1598137023 (2020-08-22T22:57:03Z) rounded down to the day.
-    assert_eq!(v.completedAt, 1598054400);
+    assert_eq!(v.emailSignedAt, 1598054400);
     assert_eq!(v.courseHash.0, keccak(&[b"Machine Learning"]));
     assert_eq!(v.dkimKeyHash.0, keccak(&[&der(&k)]));
     assert_eq!(v.wallet.0 .0, [0x11; 20]);
@@ -85,7 +125,7 @@ fn valid_coursera() {
 fn valid_udemy() {
     let v = verify(&signed(&udemy(), &key()).1).unwrap();
     assert_eq!(
-        (v.platform, v.courseName.as_str(), v.completedAt),
+        (v.platform, v.courseName.as_str(), v.emailSignedAt),
         (2, "Tally With Tax", 0)
     );
 }
@@ -252,7 +292,13 @@ fn fixture(name: &str) -> Option<Vec<u8>> {
 }
 
 fn prepare_blocking(raw: &[u8]) -> anyhow::Result<zkcert_script::inputs::Prepared> {
-    tokio::runtime::Runtime::new()?.block_on(prepare(raw, &keys::pinned_source(), [0x22; 20], true))
+    tokio::runtime::Runtime::new()?.block_on(prepare(
+        raw,
+        &keys::pinned_source(),
+        KEYS,
+        [0x22; 20],
+        true,
+    ))
 }
 
 #[test]
@@ -281,18 +327,86 @@ fn real_fixtures_verify_and_tampering_fails() {
 
 #[test]
 fn guest_panics_on_invalid_input() {
-    let (_, mut input) = signed(&coursera(), &key());
-    input.body.push(b'!');
-    let mut stdin = SP1Stdin::new();
-    stdin.write(&input);
-    let client = ProverClient::builder().mock().build();
     // A panicking guest exits non-zero; the SP1 verifiers (sp1-verifier and the on-chain
     // SP1VerifierGroth16) reject any proof whose exit code is not 0.
-    let failed = match client.execute(ELF, stdin).run() {
-        Ok((_, report)) => report.exit_code != 0,
-        Err(_) => true,
+    let (_, mut input) = signed(&coursera(), &key());
+    input.body.push(b'!');
+    assert_eq!(verify(&input).unwrap_err(), VerifyError::BodyHash);
+    assert!(guest_rejects(&input));
+}
+
+// ---- Key table (compiled into the guest) ----
+
+#[test]
+fn production_table_rejects_unknown_key() {
+    // A correctly signed email whose key is not in lib/src/keys.rs: an attacker's own key.
+    let (_, input) = signed(&udemy(), &key());
+    assert_eq!(
+        statement::verify(&input).unwrap_err(),
+        VerifyError::UnknownKey
+    );
+}
+
+#[test]
+fn guest_rejects_unknown_key() {
+    let (_, input) = signed(&udemy(), &key());
+    assert!(verify(&input).is_ok(), "the email itself is valid");
+    assert_eq!(
+        statement::verify(&input).unwrap_err(),
+        VerifyError::UnknownKey
+    );
+    assert!(guest_rejects(&input));
+}
+
+#[test]
+fn key_for_other_platform_is_rejected() {
+    // The key is pinned for Coursera only; a Udemy-domain email signed with it is refused.
+    let k = key();
+    let (_, input) = signed(&udemy(), &k);
+    let table = [pinned(&der(&k), 1, 0, u64::MAX)];
+    assert_eq!(
+        verify_with(&input, &table).unwrap_err(),
+        VerifyError::UnknownKey
+    );
+}
+
+#[test]
+fn signing_time_outside_key_window_is_rejected() {
+    // synth::coursera() signs with t=1598137023.
+    let t = 1_598_137_023;
+    let k = key();
+    let (_, input) = signed(&coursera(), &k);
+    let d = der(&k);
+    let check = |from, to| verify_with(&input, &[pinned(&d, 1, from, to)]);
+    assert!(check(t, t + 1).is_ok(), "window is [from, to)");
+    assert_eq!(check(t + 1, u64::MAX).unwrap_err(), VerifyError::KeyWindow);
+    assert_eq!(check(0, t).unwrap_err(), VerifyError::KeyWindow);
+}
+
+#[test]
+fn bounded_key_requires_signing_time() {
+    // Udemy signatures have no t=; a key with a window cannot be checked, so it is refused.
+    let k = key();
+    let (_, input) = signed(&udemy(), &k);
+    let table = [pinned(&der(&k), 2, 1, u64::MAX)];
+    assert_eq!(
+        verify_with(&input, &table).unwrap_err(),
+        VerifyError::KeyWindow
+    );
+}
+
+#[test]
+fn guest_accepts_real_fixture_and_rejects_body_edit() {
+    let Some(raw) = fixture("sample.eml") else {
+        eprintln!("skipping: fixtures/sample.eml not present");
+        return;
     };
-    assert!(failed);
+    let input = prepare_blocking(&raw).unwrap().input;
+    assert!(!guest_rejects(&input));
+    let mut edited = input.clone();
+    let i = edited.body.windows(4).position(|w| w == b"Bits").unwrap();
+    edited.body[i + 1] = b'a';
+    assert!(guest_rejects(&edited));
 }
 
 #[test]

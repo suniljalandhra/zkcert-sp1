@@ -44,36 +44,87 @@ pub fn normalize_ws(text: &str) -> String {
 pub mod coursera {
     use super::normalize_ws;
 
-    /// Fields found in a Coursera "Your Certificate is Ready" email body.
+    /// Fields found in a Coursera certificate email body.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct Fields {
         pub course_name: String,
     }
 
-    /// The only subject we accept (observed 2020). Other Coursera emails (forums, digests) can
-    /// quote user text, so the certificate email is identified by its signed subject first.
-    pub const SUBJECT: &str = "Congratulations, Your Certificate is Ready!";
+    /// A phrase pair around the course name. `unique` must occur exactly once in the body, so a
+    /// copy injected through user-controlled text (e.g. the profile name in "Dear <name>,")
+    /// makes the email ambiguous and it is rejected.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Anchor {
+        pub unique: &'static str,
+        pub start: &'static str,
+        pub end: &'static str,
+    }
 
-    const COMPLETED: &str = "Congratulations! You\u{2019}ve successfully completed ";
-    const OFFICIAL: &str = "your official ";
+    /// One known certificate email layout. Every anchor must yield the same non-empty name,
+    /// which also rejects names an anchor's `end` delimiter would truncate.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Template {
+        /// Free-form label; documents where the layout was observed.
+        pub id: &'static str,
+        /// The exact signed subject (whitespace-normalized). Other Coursera emails (forums,
+        /// digests) can quote user text, so the subject selects the template first.
+        pub subject: &'static str,
+        pub anchors: &'static [Anchor],
+    }
 
-    /// Extracts the course name from the decoded text/plain body.
-    ///
-    /// Observed template (2020): "Congratulations! You’ve successfully completed <COURSE>. On
-    /// behalf of ..." and "... your official <COURSE> Certificate." Signed bodies can still carry
-    /// user-controlled text (e.g. the profile name in "Dear <name>,"), so each anchor phrase must
-    /// occur exactly once; an injected copy makes the email ambiguous and it is rejected. The
-    /// two occurrences must also agree, which rejects names our ". " delimiter would truncate.
-    pub fn parse(text: &str) -> Option<Fields> {
+    /// Known layouts. Add one per real sample, with its own subject and anchors; never loosen an
+    /// existing one. Changing this list changes the program vkey.
+    pub const TEMPLATES: &[Template] = &[Template {
+        // fixtures/sample.eml, signed 2020-08-22: "Congratulations! You’ve successfully
+        // completed <COURSE>. On behalf of ... your official <COURSE> Certificate."
+        id: "certificate-ready-2020",
+        subject: "Congratulations, Your Certificate is Ready!",
+        anchors: &[
+            Anchor {
+                unique: "successfully completed",
+                start: "Congratulations! You\u{2019}ve successfully completed ",
+                end: ". ",
+            },
+            Anchor {
+                unique: "your official ",
+                start: "your official ",
+                end: " Certificate",
+            },
+        ],
+    }];
+
+    /// The course name from the decoded text/plain body, using the templates whose subject is
+    /// exactly `subject`. If several match, they must agree, so a new template can never make an
+    /// existing email parse to a different course.
+    pub fn parse(templates: &[Template], subject: &str, text: &str) -> Option<Fields> {
+        let subject = normalize_ws(subject);
         let t = normalize_ws(text);
-        if t.matches("successfully completed").count() != 1 || t.matches(OFFICIAL).count() != 1 {
-            return None;
+        let mut found: Option<String> = None;
+        for tpl in templates.iter().filter(|tpl| tpl.subject == subject) {
+            let Some(name) = parse_template(tpl, &t) else {
+                continue;
+            };
+            match &found {
+                Some(prev) if *prev != name => return None,
+                _ => found = Some(name),
+            }
         }
-        let completed = between(&t, COMPLETED, ". ")?;
-        let official = between(&t, OFFICIAL, " Certificate")?;
-        (completed == official && !completed.is_empty()).then(|| Fields {
-            course_name: completed.to_string(),
-        })
+        found.map(|course_name| Fields { course_name })
+    }
+
+    fn parse_template(tpl: &Template, t: &str) -> Option<String> {
+        let mut name: Option<&str> = None;
+        for a in tpl.anchors {
+            if t.matches(a.unique).count() != 1 {
+                return None;
+            }
+            let n = between(t, a.start, a.end)?;
+            if n.is_empty() || name.is_some_and(|prev| prev != n) {
+                return None;
+            }
+            name = Some(n);
+        }
+        name.map(str::to_string)
     }
 
     fn between<'a>(s: &'a str, start: &str, end: &str) -> Option<&'a str> {
@@ -137,17 +188,48 @@ mod tests {
     }
 
     const BODY: &str = "     Dear Learner,\n\n     Congratulations! You\u{2019}ve successfully completed The Bits and Bytes of\n     Computer Networking. On behalf of Google and Coursera we are pleased\n     to issue your official The Bits and Bytes of Computer Networking\n     Certificate.\n";
+    const SUBJECT: &str = "Congratulations, Your Certificate is Ready!";
+
+    fn parse(text: &str) -> Option<coursera::Fields> {
+        coursera::parse(coursera::TEMPLATES, SUBJECT, text)
+    }
+
+    /// A second, made-up layout for testing template selection.
+    const NEW: coursera::Template = coursera::Template {
+        id: "test-2026",
+        subject: "You earned a certificate",
+        anchors: &[coursera::Anchor {
+            unique: "earned a certificate for",
+            start: "You earned a certificate for ",
+            end: "!",
+        }],
+    };
+
+    #[test]
+    fn coursera_template_invariants() {
+        for t in coursera::TEMPLATES {
+            // Two anchors cross-check each other (catches names an `end` delimiter truncates).
+            assert!(t.anchors.len() >= 2, "{}", t.id);
+            // Exactly-once on `unique` only implies `start` is unique if `start` contains it.
+            assert!(
+                t.anchors.iter().all(|a| a.start.contains(a.unique)),
+                "{}",
+                t.id
+            );
+            assert_eq!(normalize_ws(t.subject), t.subject, "{}", t.id);
+        }
+    }
 
     #[test]
     fn coursera_course_name() {
-        let f = coursera::parse(BODY).unwrap();
+        let f = parse(BODY).unwrap();
         assert_eq!(f.course_name, "The Bits and Bytes of Computer Networking");
     }
 
     #[test]
     fn coursera_rejects_mismatched_names() {
         let tampered = BODY.replacen("official The Bits", "official Machine Learning The Bits", 1);
-        assert_eq!(coursera::parse(&tampered), None);
+        assert_eq!(parse(&tampered), None);
     }
 
     #[test]
@@ -157,7 +239,78 @@ mod tests {
             "Dear Learner,",
             "Dear Congratulations! You\u{2019}ve successfully completed Fake Course. x your official Fake Course Certificate,",
         );
-        assert_eq!(coursera::parse(&injected), None);
+        assert_eq!(parse(&injected), None);
+    }
+
+    #[test]
+    fn coursera_subject_must_match_template_exactly() {
+        let t = coursera::TEMPLATES;
+        assert_eq!(
+            coursera::parse(t, "Re: Congratulations, Your Certificate is Ready!", BODY),
+            None
+        );
+        assert_eq!(
+            coursera::parse(t, "Congratulations, Your Certificate is Ready", BODY),
+            None
+        );
+        assert!(coursera::parse(
+            t,
+            "  Congratulations,  Your Certificate\r\n is Ready! ",
+            BODY
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn coursera_multiple_templates() {
+        let both = [coursera::TEMPLATES[0], NEW];
+        let new_body = "Hi, You earned a certificate for Machine Learning! Share it.";
+        assert_eq!(
+            coursera::parse(&both, "You earned a certificate", new_body)
+                .unwrap()
+                .course_name,
+            "Machine Learning"
+        );
+        assert_eq!(
+            coursera::parse(&both, SUBJECT, BODY).unwrap().course_name,
+            "The Bits and Bytes of Computer Networking"
+        );
+        // A body only parses with the template its own subject selects.
+        assert_eq!(coursera::parse(&both, SUBJECT, new_body), None);
+        assert_eq!(
+            coursera::parse(&both, "You earned a certificate", BODY),
+            None
+        );
+        // Exactly-once still applies per template.
+        let twice = format!("{new_body} You earned a certificate for Fake!");
+        assert_eq!(
+            coursera::parse(&both, "You earned a certificate", &twice),
+            None
+        );
+    }
+
+    #[test]
+    fn coursera_templates_sharing_a_subject_must_agree() {
+        let other = coursera::Template {
+            id: "conflicting",
+            subject: SUBJECT,
+            anchors: &[coursera::Anchor {
+                unique: "On behalf of",
+                start: "On behalf of ",
+                end: " we",
+            }],
+        };
+        // The 2020 template says "The Bits and Bytes...", this one "Google and Coursera".
+        assert_eq!(
+            coursera::parse(&[coursera::TEMPLATES[0], other], SUBJECT, BODY),
+            None
+        );
+        assert!(coursera::parse(
+            &[coursera::TEMPLATES[0], coursera::TEMPLATES[0]],
+            SUBJECT,
+            BODY
+        )
+        .is_some());
     }
 
     #[test]
@@ -191,9 +344,6 @@ mod tests {
 
     #[test]
     fn coursera_rejects_unrelated_email() {
-        assert_eq!(
-            coursera::parse("Your weekly learning digest. Keep going!"),
-            None
-        );
+        assert_eq!(parse("Your weekly learning digest. Keep going!"), None);
     }
 }

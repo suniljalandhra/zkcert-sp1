@@ -1,5 +1,5 @@
 {
-  "_comment": "DKIM keys zkCert accepts (the dkimKeyHash allowlist). Public DNS data, fetched 2026-10-31. keyHash = keccak256(SPKI DER of p=). The same list is loaded by the CLI, the server, the web UI and the contract deploy script.",
+  "_comment": "DKIM key records the host uses to build proof inputs (the guest needs p=). Public DNS data, fetched 2026-10-31. keyHash = keccak256(SPKI DER of p=). What a proof accepts is the table compiled into the guest (lib/src/keys.rs, with validity windows); a test keeps this file equal to it. The web UI uses it for key names.",
   "keys": [
     {
       "platform": 1,

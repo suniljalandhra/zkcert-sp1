@@ -13,16 +13,18 @@ import {Deploy} from "../script/Deploy.s.sol";
 /// Calls back into the registry from attest(), as a malicious EAS would.
 contract ReentrantEAS is IEAS {
     ZkCertRegistry public registry;
+    bytes32 public vkey;
     bytes public pv;
     bool public reverted;
 
-    function arm(ZkCertRegistry r, bytes memory v) external {
+    function arm(ZkCertRegistry r, bytes32 k, bytes memory v) external {
         registry = r;
+        vkey = k;
         pv = v;
     }
 
     function attest(AttestationRequest calldata) external payable returns (bytes32) {
-        try registry.claim(pv, "") {}
+        try registry.claim(vkey, pv, "") {}
         catch {
             reverted = true;
         }
@@ -53,30 +55,31 @@ contract MockEAS is IEAS {
 /// Logic tests with SP1MockVerifier (accepts an empty proof for any public values).
 contract ZkCertRegistryLogicTest is Test {
     bytes32 constant VKEY = bytes32(uint256(0xabc));
+    bytes32 constant VKEY2 = bytes32(uint256(0xdef));
     bytes32 constant KEY = keccak256("udemy key");
     address constant WALLET = address(0xBEEF);
 
     ZkCertRegistry registry;
     MockEAS eas;
 
-    function setUp() public {
-        eas = new MockEAS();
-        registry = new ZkCertRegistry(new SP1MockVerifier(), VKEY, eas, address(this));
-        registry.setKey(KEY, 2);
+    function one(bytes32 vkey) internal pure returns (bytes32[] memory a) {
+        a = new bytes32[](1);
+        a[0] = vkey;
     }
 
-    function values(bytes32 key, uint8 platform, bytes32 nullifier, address wallet)
-        internal
-        pure
-        returns (bytes memory)
-    {
+    function setUp() public {
+        eas = new MockEAS();
+        registry = new ZkCertRegistry(new SP1MockVerifier(), one(VKEY), eas, address(this));
+    }
+
+    function values(bytes32 nullifier, address wallet) internal pure returns (bytes memory) {
         return abi.encode(
             PublicValues({
-                platform: platform,
+                platform: 2,
                 courseHash: keccak256("Tally With Tax"),
                 courseName: "Tally With Tax",
-                completedAt: 0,
-                dkimKeyHash: key,
+                emailSignedAt: 0,
+                dkimKeyHash: KEY,
                 nullifier: nullifier,
                 wallet: wallet
             })
@@ -85,108 +88,116 @@ contract ZkCertRegistryLogicTest is Test {
 
     function test_ClaimAttestsToBoundWallet() public {
         vm.prank(WALLET);
-        bytes32 uid = registry.claim(values(KEY, 2, bytes32("n1"), WALLET), "");
+        bytes32 uid = registry.claim(VKEY, values(bytes32("n1"), WALLET), "");
         assertEq(registry.claimed(bytes32("n1")), uid);
         (bytes memory data, address recipient) = eas.lastData();
         assertEq(recipient, WALLET);
-        (uint8 platform,, string memory name,,) = abi.decode(data, (uint8, bytes32, string, uint64, bytes32));
+        (uint8 platform,, string memory name,,, bytes32 programVKey) =
+            abi.decode(data, (uint8, bytes32, string, uint64, bytes32, bytes32));
         assertEq(platform, 2);
         assertEq(name, "Tally With Tax");
+        assertEq(programVKey, VKEY);
     }
 
-    function test_RevertWhen_KeyNotAllowlisted() public {
-        bytes32 other = keccak256("attacker key");
-        vm.expectRevert(abi.encodeWithSelector(ZkCertRegistry.UnknownKey.selector, other, uint8(2)));
-        registry.verify(values(other, 2, bytes32("n1"), WALLET), "");
+    function test_RevertWhen_VKeyNotAccepted() public {
+        vm.expectRevert(abi.encodeWithSelector(ZkCertRegistry.UnknownProgram.selector, VKEY2));
+        registry.verify(VKEY2, values(bytes32("n1"), WALLET), "");
     }
 
-    function test_RevertWhen_KeyAllowlistedForOtherPlatform() public {
-        vm.expectRevert(abi.encodeWithSelector(ZkCertRegistry.UnknownKey.selector, KEY, uint8(1)));
-        registry.verify(values(KEY, 1, bytes32("n1"), WALLET), "");
+    function test_AddedVKeyIsAccepted() public {
+        registry.setVKey(VKEY2, true);
+        vm.prank(WALLET);
+        registry.claim(VKEY2, values(bytes32("n1"), WALLET), "");
     }
 
-    function test_RevertWhen_PlatformZero() public {
-        registry.setKey(KEY, 0);
-        vm.expectRevert(abi.encodeWithSelector(ZkCertRegistry.UnknownKey.selector, KEY, uint8(0)));
-        registry.verify(values(KEY, 0, bytes32("n1"), WALLET), "");
+    function test_RevertWhen_VKeyRetired() public {
+        registry.setVKey(VKEY, false);
+        vm.expectRevert(abi.encodeWithSelector(ZkCertRegistry.UnknownProgram.selector, VKEY));
+        registry.verify(VKEY, values(bytes32("n1"), WALLET), "");
+    }
+
+    function test_RevertWhen_NonOwnerSetsVKey() public {
+        vm.prank(address(0xBAD));
+        vm.expectRevert(ZkCertRegistry.NotOwner.selector);
+        registry.setVKey(keccak256("attacker program"), true);
+    }
+
+    function test_ConstructorAcceptsAllGivenVKeys() public {
+        bytes32[] memory both = new bytes32[](2);
+        (both[0], both[1]) = (VKEY, VKEY2);
+        ZkCertRegistry r = new ZkCertRegistry(new SP1MockVerifier(), both, eas, address(this));
+        assertTrue(r.acceptedVKeys(VKEY) && r.acceptedVKeys(VKEY2));
+        assertFalse(r.acceptedVKeys(bytes32(uint256(1))));
     }
 
     function test_RevertWhen_SenderIsNotBoundWallet() public {
         vm.prank(address(0xBAD));
         vm.expectRevert(abi.encodeWithSelector(ZkCertRegistry.WrongWallet.selector, WALLET, address(0xBAD)));
-        registry.claim(values(KEY, 2, bytes32("n1"), WALLET), "");
+        registry.claim(VKEY, values(bytes32("n1"), WALLET), "");
     }
 
     function test_RevertWhen_NullifierReused() public {
         vm.prank(WALLET);
-        bytes32 uid = registry.claim(values(KEY, 2, bytes32("n1"), WALLET), "");
+        bytes32 uid = registry.claim(VKEY, values(bytes32("n1"), WALLET), "");
         // The same certificate proved again for a second wallet.
         address second = address(0xCAFE);
         vm.prank(second);
         vm.expectRevert(abi.encodeWithSelector(ZkCertRegistry.AlreadyClaimed.selector, bytes32("n1"), uid));
-        registry.claim(values(KEY, 2, bytes32("n1"), second), "");
+        registry.claim(VKEY, values(bytes32("n1"), second), "");
+    }
+
+    function test_RevertWhen_NullifierReusedUnderNewProgramVersion() public {
+        // Rotating the program must not reopen certificates claimed under the old one.
+        vm.prank(WALLET);
+        bytes32 uid = registry.claim(VKEY, values(bytes32("n1"), WALLET), "");
+        registry.setVKey(VKEY2, true);
+        vm.prank(WALLET);
+        vm.expectRevert(abi.encodeWithSelector(ZkCertRegistry.AlreadyClaimed.selector, bytes32("n1"), uid));
+        registry.claim(VKEY2, values(bytes32("n1"), WALLET), "");
     }
 
     function test_RevertWhen_ProofInvalid() public {
         vm.expectRevert();
-        registry.verify(values(KEY, 2, bytes32("n1"), WALLET), hex"01");
-    }
-
-    function test_RevertWhen_KeyRemoved() public {
-        registry.setKey(KEY, 0);
-        vm.expectRevert(abi.encodeWithSelector(ZkCertRegistry.UnknownKey.selector, KEY, uint8(2)));
-        registry.verify(values(KEY, 2, bytes32("n1"), WALLET), "");
-    }
-
-    function test_RevertWhen_NonOwnerSetsKey() public {
-        vm.prank(address(0xBAD));
-        vm.expectRevert(ZkCertRegistry.NotOwner.selector);
-        registry.setKey(keccak256("attacker key"), 2);
+        registry.verify(VKEY, values(bytes32("n1"), WALLET), hex"01");
     }
 
     function test_SchemaUidMatchesEasFormula() public view {
         assertEq(registry.schemaUID(), keccak256(abi.encodePacked(registry.SCHEMA(), address(0), false)));
     }
 
-    function test_RevertWhen_InvalidPlatform() public {
-        vm.expectRevert(abi.encodeWithSelector(ZkCertRegistry.InvalidPlatform.selector, uint8(3)));
-        registry.setKey(KEY, 3);
-    }
-
     function test_RevertWhen_ConstructorZeroAddress() public {
         SP1MockVerifier v = new SP1MockVerifier();
+        bytes32[] memory vk = one(VKEY);
         vm.expectRevert(ZkCertRegistry.ZeroAddress.selector);
-        new ZkCertRegistry(ISP1Verifier(address(0)), VKEY, eas, address(this));
+        new ZkCertRegistry(ISP1Verifier(address(0)), vk, eas, address(this));
         vm.expectRevert(ZkCertRegistry.ZeroAddress.selector);
-        new ZkCertRegistry(v, VKEY, IEAS(address(0)), address(this));
+        new ZkCertRegistry(v, vk, IEAS(address(0)), address(this));
         vm.expectRevert(ZkCertRegistry.ZeroAddress.selector);
-        new ZkCertRegistry(v, VKEY, eas, address(0));
+        new ZkCertRegistry(v, vk, eas, address(0));
     }
 
     function test_ReentrantClaimIsRejected() public {
         ReentrantEAS evil = new ReentrantEAS();
-        ZkCertRegistry r = new ZkCertRegistry(new SP1MockVerifier(), VKEY, evil, address(this));
-        r.setKey(KEY, 2);
-        bytes memory pv = values(KEY, 2, bytes32("n1"), address(evil));
-        evil.arm(r, pv);
+        ZkCertRegistry r = new ZkCertRegistry(new SP1MockVerifier(), one(VKEY), evil, address(this));
+        bytes memory pv = values(bytes32("n1"), address(evil));
+        evil.arm(r, VKEY, pv);
         vm.prank(address(evil));
-        r.claim(pv, "");
+        r.claim(VKEY, pv, "");
         // The nested claim saw the nullifier already marked and reverted.
         assertTrue(evil.reverted());
     }
 
     function test_RevertWhen_AttestationUidZero() public {
-        ZkCertRegistry r = new ZkCertRegistry(new SP1MockVerifier(), VKEY, new ZeroUidEAS(), address(this));
-        r.setKey(KEY, 2);
+        ZkCertRegistry r = new ZkCertRegistry(new SP1MockVerifier(), one(VKEY), new ZeroUidEAS(), address(this));
         vm.prank(WALLET);
         vm.expectRevert(ZkCertRegistry.AttestationFailed.selector);
-        r.claim(values(KEY, 2, bytes32("n1"), WALLET), "");
+        r.claim(VKEY, values(bytes32("n1"), WALLET), "");
     }
 
     function test_OwnershipTransfer() public {
         registry.transferOwnership(address(0x1));
         vm.expectRevert(ZkCertRegistry.NotOwner.selector);
-        registry.setKey(KEY, 2);
+        registry.setVKey(VKEY2, true);
         vm.prank(address(0x1));
         vm.expectRevert(ZkCertRegistry.ZeroAddress.selector);
         registry.transferOwnership(address(0));
@@ -197,48 +208,52 @@ contract ZkCertRegistryLogicTest is Test {
 /// (what SP1_PROVER=mock bundles contain) must never pass.
 contract ZkCertRegistryGatewayTest is Test {
     ZkCertRegistry registry;
+    bytes32 constant VKEY = bytes32(uint256(1));
     bytes pv;
 
     function setUp() public {
         SP1VerifierGateway gateway = new SP1VerifierGateway(address(this));
         gateway.addRoute(address(new SP1VerifierGroth16()));
-        registry = new ZkCertRegistry(gateway, bytes32(uint256(1)), new MockEAS(), address(this));
-        registry.setKey(keccak256("k"), 2);
+        bytes32[] memory vk = new bytes32[](1);
+        vk[0] = VKEY;
+        registry = new ZkCertRegistry(gateway, vk, new MockEAS(), address(this));
         pv = abi.encode(PublicValues(2, bytes32(0), "", 0, keccak256("k"), bytes32("n"), address(0xBEEF)));
     }
 
     function test_RevertWhen_EmptyProof() public {
         vm.expectRevert();
-        registry.verify(pv, "");
+        registry.verify(VKEY, pv, "");
     }
 
     function test_RevertWhen_UnknownVerifierSelector() public {
         vm.expectRevert();
-        registry.verify(pv, hex"deadbeef");
+        registry.verify(VKEY, pv, hex"deadbeef");
     }
 
     function test_RevertWhen_GarbageGroth16Proof() public {
         bytes4 selector = bytes4(new SP1VerifierGroth16().VERIFIER_HASH());
         vm.expectRevert();
-        registry.verify(pv, abi.encodePacked(selector, new bytes(11 * 32)));
+        registry.verify(VKEY, pv, abi.encodePacked(selector, new bytes(11 * 32)));
     }
 }
 
-/// Deploy.s.sol reads config/dkim-keys.json correctly.
+/// Deploy.s.sol reads config/program.json correctly.
 contract DeployScriptTest is Test {
-    function test_LoadsAllowlist() public {
+    function test_LoadsAcceptedVKeys() public {
         Deploy d = new Deploy();
-        Deploy.KeyEntry[] memory keys =
-            d.loadKeys(vm.readFile(string.concat(vm.projectRoot(), "/../config/dkim-keys.json")));
-        assertEq(keys.length, 2);
-        assertEq(keys[0].platform, 1);
-        assertEq(keys[0].keyHash, 0x34258a3d226293c85b11044d63a85aee881725f9df3400c5dec295b0ac5ce699);
-        assertEq(keys[1].platform, 2);
-        assertEq(keys[1].keyHash, 0x148b127e51c61a3f7d101bbf429c81e955ce720227d3c091e7b1b32f564a2451);
+        string memory json = vm.readFile(string.concat(vm.projectRoot(), "/../config/program.json"));
+        bytes32[] memory vkeys = d.loadVKeys(json);
+        assertGt(vkeys.length, 0);
+        bytes32 current = vm.parseJsonBytes32(json, ".vkey");
+        bool found;
+        for (uint256 i = 0; i < vkeys.length; i++) {
+            found = found || vkeys[i] == current;
+        }
+        assertTrue(found, "current vkey is not accepted");
     }
 }
 
-/// End-to-end with a real Groth16 proof (`zkcert prove` on fixtures/redacted/synthetic-udemy.eml)
+/// End-to-end with a real Groth16 proof of a real, allowlisted email (`zkcert prove`, see README)
 /// checked by the real SP1 v6.1.0 Groth16 verifier.
 contract ZkCertRegistryProofTest is Test {
     ZkCertRegistry registry;
@@ -268,60 +283,69 @@ contract ZkCertRegistryProofTest is Test {
         proof = vm.parseJsonBytes(json, ".proof");
         publicValues = vm.parseJsonBytes(json, ".publicValues");
         v = abi.decode(publicValues, (PublicValues));
+        // A fixture from a retired program version (e.g. one without the key table) must not pass.
+        bytes32[] memory accepted = vm.parseJsonBytes32Array(
+            vm.readFile(string.concat(vm.projectRoot(), "/../config/program.json")), ".accepted"
+        );
+        bool ok;
+        for (uint256 i = 0; i < accepted.length; i++) {
+            ok = ok || accepted[i] == vkey;
+        }
+        require(ok, "fixture vkey is not an accepted program version (config/program.json)");
         eas = new MockEAS();
-        registry = new ZkCertRegistry(new SP1VerifierGroth16(), vkey, eas, address(this));
-        registry.setKey(v.dkimKeyHash, v.platform);
+        bytes32[] memory vk = new bytes32[](1);
+        vk[0] = vkey;
+        registry = new ZkCertRegistry(new SP1VerifierGroth16(), vk, eas, address(this));
     }
 
     function test_FixtureDecodes() public withFixture {
-        assertEq(v.platform, 2);
-        assertEq(v.courseHash, keccak256("Tally With Tax"));
-        assertEq(v.wallet, 0x1234567890123456789012345678901234567890);
+        assertTrue(v.platform == 1 || v.platform == 2);
+        assertTrue(v.wallet != address(0));
     }
 
     function test_RealProofClaims() public withFixture {
         vm.prank(v.wallet);
-        registry.claim(publicValues, proof);
+        registry.claim(vkey, publicValues, proof);
         assertTrue(registry.claimed(v.nullifier) != bytes32(0));
     }
 
     function test_RevertWhen_PublicValuesTampered() public withFixture {
         bytes memory tampered = abi.encode(
-            PublicValues(v.platform, v.courseHash, "Harvard MBA", v.completedAt, v.dkimKeyHash, v.nullifier, v.wallet)
+            PublicValues(v.platform, v.courseHash, "Harvard MBA", v.emailSignedAt, v.dkimKeyHash, v.nullifier, v.wallet)
         );
         vm.expectRevert();
-        registry.verify(tampered, proof);
+        registry.verify(vkey, tampered, proof);
     }
 
     function test_RevertWhen_WalletSwapped() public withFixture {
         bytes memory swapped = abi.encode(
             PublicValues(
-                v.platform, v.courseHash, v.courseName, v.completedAt, v.dkimKeyHash, v.nullifier, address(0xBAD)
+                v.platform, v.courseHash, v.courseName, v.emailSignedAt, v.dkimKeyHash, v.nullifier, address(0xBAD)
             )
         );
         vm.expectRevert();
-        registry.verify(swapped, proof);
+        registry.verify(vkey, swapped, proof);
     }
 
     function test_RevertWhen_OtherProgramVKey() public withFixture {
-        ZkCertRegistry other =
-            new ZkCertRegistry(new SP1VerifierGroth16(), bytes32(uint256(vkey) ^ 1), eas, address(this));
-        other.setKey(v.dkimKeyHash, v.platform);
+        // Even an accepted vkey must be the one the proof was made for.
+        bytes32 other = bytes32(uint256(vkey) ^ 1);
+        registry.setVKey(other, true);
         vm.expectRevert();
-        other.verify(publicValues, proof);
+        registry.verify(other, publicValues, proof);
     }
 
     function test_RevertWhen_ProofBitFlipped() public withFixture {
         bytes memory bad = bytes.concat(proof);
         bad[bad.length - 1] ^= 0x01;
         vm.expectRevert();
-        registry.verify(publicValues, bad);
+        registry.verify(vkey, publicValues, bad);
     }
 
     function test_ClaimGas() public withFixture {
         vm.prank(v.wallet);
         uint256 g = gasleft();
-        registry.claim(publicValues, proof);
+        registry.claim(vkey, publicValues, proof);
         emit log_named_uint("claim gas (incl. mock EAS)", g - gasleft());
     }
 }
