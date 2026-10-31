@@ -11,8 +11,7 @@ pub enum Platform {
 impl Platform {
     pub const ALL: [Platform; 2] = [Platform::Coursera, Platform::Udemy];
 
-    /// Domains the platform signs completion emails with. Udemy sends from `e.udemymail.com`
-    /// (registered 2011, DMARC reports go to udemy.com; see docs/PHASE1_FINDINGS.md).
+    /// Domains the platform signs completion emails with.
     pub fn root_domains(self) -> &'static [&'static str] {
         match self {
             Platform::Coursera => &["coursera.org"],
@@ -20,9 +19,7 @@ impl Platform {
         }
     }
 
-    /// The platform with a root domain equal to `domain` or a parent of it. Label-boundary match,
-    /// so `evilcoursera.org` and `coursera.org.evil.com` are rejected. Case-insensitive
-    /// (DNS names, RFC 4343).
+    /// The platform with a root domain equal to `domain` or a parent of it.
     pub fn from_domain(domain: &str) -> Option<Platform> {
         let d = domain.trim().trim_end_matches('.').to_ascii_lowercase();
         if d.split('.').any(str::is_empty) {
@@ -50,9 +47,7 @@ pub mod coursera {
         pub course_name: String,
     }
 
-    /// A phrase pair around the course name. `unique` must occur exactly once in the body, so a
-    /// copy injected through user-controlled text (e.g. the profile name in "Dear <name>,")
-    /// makes the email ambiguous and it is rejected.
+    /// A phrase pair around the course name.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Anchor {
         pub unique: &'static str,
@@ -60,23 +55,19 @@ pub mod coursera {
         pub end: &'static str,
     }
 
-    /// One known certificate email layout. Every anchor must yield the same non-empty name,
-    /// which also rejects names an anchor's `end` delimiter would truncate.
+    /// One known certificate email layout.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Template {
         /// Free-form label; documents where the layout was observed.
         pub id: &'static str,
-        /// The exact signed subject (whitespace-normalized). Other Coursera emails (forums,
-        /// digests) can quote user text, so the subject selects the template first.
+        /// The exact signed subject (whitespace-normalized).
         pub subject: &'static str,
         pub anchors: &'static [Anchor],
     }
 
-    /// Known layouts. Add one per real sample, with its own subject and anchors; never loosen an
-    /// existing one. Changing this list changes the program vkey.
+    /// Known layouts.
     pub const TEMPLATES: &[Template] = &[Template {
-        // fixtures/sample.eml, signed 2020-08-22: "Congratulations! You’ve successfully
-        // completed <COURSE>. On behalf of ... your official <COURSE> Certificate."
+        // Observed 2020: "...successfully completed <COURSE>. ... your official <COURSE> Certificate."
         id: "certificate-ready-2020",
         subject: "Congratulations, Your Certificate is Ready!",
         anchors: &[
@@ -94,8 +85,7 @@ pub mod coursera {
     }];
 
     /// The course name from the decoded text/plain body, using the templates whose subject is
-    /// exactly `subject`. If several match, they must agree, so a new template can never make an
-    /// existing email parse to a different course.
+    /// exactly `subject`.
     pub fn parse(templates: &[Template], subject: &str, text: &str) -> Option<Fields> {
         let subject = normalize_ws(subject);
         let t = normalize_ws(text);
@@ -139,9 +129,8 @@ pub mod udemy {
 
     const PREFIX: &str = "Your completion certificate is ready for \"";
 
-    /// Extracts the course title from the signed subject (observed 2023):
-    /// `Your completion certificate is ready for "<COURSE>"`. The title is everything between the
-    /// fixed prefix and the final quote, so a title that itself contains quotes still parses whole.
+    /// Extracts the course title from the signed subject (observed 2023): `Your completion
+    /// certificate is ready for "<COURSE>"`.
     pub fn parse_subject(subject: &str) -> Option<String> {
         let s = normalize_ws(subject);
         let name = s.strip_prefix(PREFIX)?.strip_suffix('"')?.trim();

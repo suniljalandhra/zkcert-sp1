@@ -1,9 +1,4 @@
-//! The whole proof statement. The SP1 guest calls [`verify`] and commits the result; the host
-//! calls the same function first so a bad email fails in milliseconds instead of in the prover.
-//!
-//! Every input is untrusted. The signed-header blob and the body are trusted only because the
-//! RSA signature and `bh=` bind them to the key, and the key only because it is in the pinned
-//! table compiled into the program ([`crate::keys::KEYS`]), for that platform and signing time.
+//! The whole proof statement.
 
 use std::fmt;
 
@@ -117,10 +112,7 @@ pub fn single_address(value: &str) -> Option<String> {
     ok.then(|| addr.to_string())
 }
 
-/// The proof statement with the production key table.
-/// `keccak("zkcert-v1", platform, courseHash, keccak(lowercase To))`. Every accepted program version
-/// must derive it identically: the registry's once-per-certificate rule across versions depends on it
-/// (pinned by `nullifier_test_vector`).
+/// `keccak("zkcert-v1", platform, courseHash, keccak(lowercase To))`.
 pub fn nullifier(platform: u8, course_hash: &[u8; 32], to_addr: &str) -> [u8; 32] {
     keccak(&[
         NULLIFIER_DOMAIN,
@@ -130,6 +122,7 @@ pub fn nullifier(platform: u8, course_hash: &[u8; 32], to_addr: &str) -> [u8; 32
     ])
 }
 
+/// The proof statement with the production key table.
 pub fn verify(input: &GuestInput) -> Result<PublicValues, VerifyError> {
     verify_with(input, KEYS)
 }
@@ -188,8 +181,7 @@ pub fn verify_with(input: &GuestInput, keys: &[PinnedKey]) -> Result<PublicValue
             return Err(VerifyError::HeaderNotSigned(h));
         }
     }
-    // Defence in depth: the blob's fields must appear in h= order (§5.4.2). RSA already binds
-    // the blob; this rules out any parse ambiguity between signer and guest.
+    // Defence in depth: the blob's fields must appear in h= order (§5.4.2).
     let mut h = tags.h.iter();
     for (name, _) in signed {
         if !h.any(|x| x == name) {
@@ -278,8 +270,7 @@ pub fn verify_with(input: &GuestInput, keys: &[PinnedKey]) -> Result<PublicValue
         } else {
             String::new()
         },
-        // When the platform signed the email, not when the course was finished. Day precision:
-        // the exact signing second could link a wallet to platform send logs.
+        // When the platform signed the email, not when the course was finished.
         emailSignedAt: tags.t.map_or(0, |t| t - t % DAY),
         dkimKeyHash: FixedBytes(key_hash),
         nullifier: FixedBytes(nullifier),

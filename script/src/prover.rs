@@ -15,14 +15,12 @@ pub const ZKCERT_ELF: Elf = include_elf!("zkcert-program");
 const PROGRAM_JSON: &str = include_str!("../../config/program.json");
 
 /// The vkey of the current program (config/program.json `vkey`, written by `zkcert vkey --write`).
-/// Comparing against this, not the locally built ELF, means a modified build is not trusted.
 pub fn pinned_vkey() -> Result<String> {
     let v: serde_json::Value = serde_json::from_str(PROGRAM_JSON)?;
     Ok(v["vkey"].as_str().unwrap_or_default().to_string())
 }
 
-/// Every program version verifiers accept (config/program.json `accepted`). A key-table change
-/// is a new version; an old one stays accepted until it is removed here (and in the registry).
+/// Every program version verifiers accept (config/program.json `accepted`).
 pub fn accepted_vkeys() -> Result<Vec<String>> {
     let v: serde_json::Value = serde_json::from_str(PROGRAM_JSON)?;
     Ok(v["accepted"]
@@ -52,8 +50,7 @@ fn stdin(input: &GuestInput) -> SP1Stdin {
 pub enum ProofSystem {
     /// SP1's compressed STARK: made locally on a laptop, verified off-chain (CLI or browser).
     Compressed,
-    /// The compressed proof wrapped in Groth16: ~260 bytes, verifiable on-chain. The wrap needs far
-    /// more memory than a 16 GB machine has, so in practice it needs `SP1_PROVER=network`.
+    /// The compressed proof wrapped in Groth16: ~260 bytes, verifiable on-chain.
     Groth16,
 }
 

@@ -52,7 +52,7 @@ pub struct ProofBundle {
     /// Program verification key hash (bytes32).
     pub vkey: String,
     /// Compressed proofs only: the same vkey as SP1's KoalaBear digest (bincode, hex), which the
-    /// compressed verifier needs. It must map to `vkey`; verifiers check that.
+    /// compressed verifier needs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vkey_hash: Option<String>,
     pub proof: String,
@@ -78,9 +78,6 @@ impl ProofBundle {
 }
 
 /// Everything a verifier must check, in order. Returns the trusted public values.
-///
-/// The DKIM key is not checked here: each accepted program version only accepts the keys in its
-/// own compiled table, so accepting the vkey is accepting that table.
 pub fn verify_bundle(
     b: &ProofBundle,
     accepted_vkeys: &[String],

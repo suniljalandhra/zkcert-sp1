@@ -1,10 +1,6 @@
 //! Positive and negative tests for the guest statement (`zkcert_lib::verify`), using synthetic
-//! emails signed with a key generated at test time, plus the real fixtures when present
-//! (they are git-ignored, so those tests skip on a fresh clone).
-//!
-//! Synthetic keys are not in the production key table, so most tests use [`verify`] below, which
-//! runs the statement with a table trusting the input's key; the key-table tests use the real
-//! table or explicit windows.
+//! emails signed with a key generated at test time, plus the real fixtures when present (they are
+//! git-ignored, so those tests skip on a fresh clone).
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use rsa::{pkcs8::EncodePublicKey, rand_core::OsRng, RsaPrivateKey};
@@ -48,8 +44,6 @@ fn verify(input: &GuestInput) -> Result<PublicValues, VerifyError> {
 }
 
 /// Runs the real guest ELF; true if it ran and exited non-zero (then no valid proof can exist).
-/// An executor error (ELF not loading, bad stdin) fails the test instead of counting as a rejection.
-/// Callers also assert the host `verify` error, so the rejection reason is known.
 fn guest_rejects(input: &GuestInput) -> bool {
     let mut stdin = SP1Stdin::new();
     stdin.write(input);

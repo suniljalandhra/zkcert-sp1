@@ -1,13 +1,4 @@
 //! zkcert CLI.
-//!
-//! ```shell
-//! cargo run --release -- execute fixtures/sample.eml            # run the guest, print cycles
-//! cargo run --release -- execute x.eml --no-host-check          # skip host checks (demos)
-//! cargo run --release -- prove fixtures/sample.eml --wallet 0x… # compressed proof -> zkcert-proof.json
-//! cargo run --release -- verify zkcert-proof.json               # offline verification
-//! cargo run --release -- vkey                                   # program verification key
-//! ```
-//! `SP1_PROVER=mock|cpu|cuda|network` selects the prover (see .env.example).
 
 use std::{path::PathBuf, process::ExitCode};
 
@@ -48,8 +39,8 @@ enum Cmd {
         email: EmailArgs,
         #[arg(long, default_value = "zkcert-proof.json")]
         out: PathBuf,
-        /// `compressed` (local, verified off-chain) or `groth16` (on-chain; needs SP1_PROVER=network
-        /// or a machine with much more than 16 GB RAM).
+        /// `compressed` (local, verified off-chain) or `groth16` (on-chain; needs
+        /// SP1_PROVER=network or a machine with much more than 16 GB RAM).
         #[arg(long, default_value = "compressed", value_parser = ["compressed", "groth16"])]
         proof_system: String,
     },
@@ -62,14 +53,13 @@ enum Cmd {
     },
     /// Print the program verification key.
     Vkey {
-        /// Also pin it in config/program.json as the current version and add it to `accepted`
-        /// (read by `verify`, the web UI and the deploy). Older versions stay accepted until
-        /// removed from `accepted` by hand.
+        /// Also pin it in config/program.json as the current version and add it to `accepted` (read
+        /// by `verify`, the web UI and the deploy).
         #[arg(long)]
         write: bool,
     },
-    /// Write a synthetic Udemy email signed with a fresh throwaway key, plus its DKIM record
-    /// (for fixtures and demos without personal data).
+    /// Write a synthetic Udemy email signed with a fresh throwaway key, plus its DKIM record (for
+    /// fixtures and demos without personal data).
     Synth {
         #[arg(long, default_value = "fixtures/redacted")]
         dir: PathBuf,
@@ -86,12 +76,11 @@ struct EmailArgs {
     /// Reveal the course name in the public values.
     #[arg(long)]
     disclose: bool,
-    /// Fetch DKIM key records from live DNS instead of config/dkim-keys.json. The guest still
-    /// accepts only the keys compiled into it.
+    /// Fetch DKIM key records from live DNS instead of config/dkim-keys.json.
     #[arg(long, conflicts_with = "key")]
     dns: bool,
-    /// Use this key record instead of config/dkim-keys.json: `<selector>._domainkey.<domain>=<file>`.
-    /// The guest rejects it unless the key is in its compiled table (lib/src/keys.rs).
+    /// Use this key record instead of config/dkim-keys.json:
+    /// `<selector>._domainkey.<domain>=<file>`.
     #[arg(long, value_name = "NAME=FILE")]
     key: Vec<String>,
 }

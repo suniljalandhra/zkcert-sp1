@@ -1,5 +1,4 @@
 // The SP1 compressed-proof verifier (verifier/ crate) compiled to WebAssembly by build-wasm.sh.
-// Loaded on first use so the 1 MB module is not part of the initial page load.
 let ready: Promise<typeof import('../wasm/zkcert_verifier.js')> | null = null
 
 function load() {

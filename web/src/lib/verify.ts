@@ -79,13 +79,7 @@ export function reason(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
-/**
- * Verifies a bundle without trusting the server: an accepted (pinned) program vkey, then the proof.
- * A compressed proof is verified here in the browser (WebAssembly), with no network access. A
- * Groth16 proof is checked by the SP1 gateway on Base Sepolia via eth_call. The DKIM key allowlist
- * is enforced inside the proof by each accepted program version, so the key is only looked up here
- * for display. Every check runs and is reported, so a failure is explainable.
- */
+/** Verifies a bundle without trusting the server: compressed proofs in WebAssembly, Groth16 via the SP1 gateway. */
 export async function verifyBundle(b: ProofBundle, client?: Client): Promise<Verdict> {
   const checks: Check[] = []
   const add = (label: string, ok: boolean, detail?: string) => (checks.push({ label, ok, detail }), ok)

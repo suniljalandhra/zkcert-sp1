@@ -1,5 +1,5 @@
-//! Builds the guest input from a raw .eml: pick the platform signature, canonicalize, and check
-//! the result with the same `verify` the guest runs.
+//! Builds the guest input from a raw .eml: pick the platform signature, canonicalize, and check the
+//! result with the same `verify` the guest runs.
 
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -47,9 +47,7 @@ pub struct Prepared {
     pub expected: PublicValues,
 }
 
-/// The guest input plus the values the guest will commit. `table` is the guest's key table
-/// (`zkcert_lib::keys::KEYS` everywhere but tests), so an email the guest would reject fails here
-/// in milliseconds instead of in the prover.
+/// The guest input plus the values the guest will commit.
 pub async fn prepare(
     raw: &[u8],
     keys: &KeySource,

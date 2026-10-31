@@ -136,14 +136,14 @@ export function Generate({ onProof }: { onProof: (b: ProofBundle) => void }) {
       <EmlHelp />
 
       <label className="field">
-        <span>Wallet to bind the proof to</span>
-        <input value={wallet} onChange={(e) => setWallet(e.target.value.trim())} placeholder="0x… (connect a wallet or paste an address)" spellCheck={false} />
+        <span>Wallet</span>
+        <input value={wallet} onChange={(e) => setWallet(e.target.value.trim())} placeholder="0x…" spellCheck={false} />
         {wallet && !walletOk && <small className="bad">Not a valid address.</small>}
       </label>
 
       <label className="check">
         <input type="checkbox" checked={disclose} onChange={(e) => setDisclose(e.target.checked)} />
-        <span>Disclose the course name in the proof (otherwise only its hash is public)</span>
+        <span>Show the course name (otherwise only its hash)</span>
       </label>
 
       <fieldset className="choice">
@@ -151,28 +151,27 @@ export function Generate({ onProof }: { onProof: (b: ProofBundle) => void }) {
         <label className="check">
           <input type="radio" name="system" checked={system === 'compressed'} onChange={() => setSystem('compressed')} />
           <span>
-            <strong>Off-chain</strong> (recommended): made on the prover machine in about 1–2 minutes; anyone verifies it in the browser for free.
+            <strong>Off-chain</strong> · verified in any browser
           </span>
         </label>
         <label className="check">
           <input type="radio" name="system" checked={system === 'groth16'} disabled={!groth16Ok} onChange={() => setSystem('groth16')} />
           <span>
-            <strong>On-chain</strong> (Groth16): can be minted as an EAS attestation.{' '}
-            {!groth16Ok && <span className="muted">Needs the server to run with SP1_PROVER=network; a 16 GB machine runs out of memory.</span>}
+            <strong>On-chain</strong> · Groth16, mintable {!groth16Ok && <span className="muted">(needs SP1_PROVER=network)</span>}
           </span>
         </label>
       </fieldset>
 
       {health ? (
         health.local ? (
-          <p className="note">🔒 The prover runs on this machine ({health.proverKind}). Your email never leaves it, and is dropped after proving.</p>
+          <p className="note">Proving runs on this machine. Your email never leaves it.</p>
         ) : (
           <p className="alert">
-            The prover uses Succinct&apos;s prover network: your email&apos;s signed headers and body are sent to it to make the proof.
+            Proving uses Succinct&apos;s prover network, which receives your email.
           </p>
         )
       ) : (
-        <p className="muted">Prover server not reachable at {API_URL}. Start it with <code>cargo run --release -p zkcert-server</code>.</p>
+        <p className="muted">Prover server not reachable at {API_URL}.</p>
       )}
 
       <button className="primary" disabled={!file || !walletOk || busy} onClick={submit}>
@@ -186,8 +185,8 @@ export function Generate({ onProof }: { onProof: (b: ProofBundle) => void }) {
             <span className="spinner" /> {phase.k === 'queued'
               ? 'Signature valid. Waiting for the prover…'
               : system === 'compressed'
-                ? 'Generating the proof (about 1–2 minutes)…'
-                : 'Generating the on-chain Groth16 proof (this can take several minutes)…'}
+                ? 'Proving (about 1–2 minutes)…'
+                : 'Proving Groth16 (several minutes)…'}
           </p>
           <p className="muted">
             Detected: {phase.preview.platform} · {phase.preview.courseName || 'course hidden'}

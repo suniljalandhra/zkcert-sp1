@@ -59,7 +59,7 @@ export default function App() {
       {tab === 'Verify' && <Verify initial={bundle} onLoad={onProof} />}
       {tab === 'Mint' && <Mint bundle={bundle} />}
       <footer className="muted">
-        SP1 zkVM · DKIM (RFC 6376) · proofs verify in your browser · run the prover on your own computer and your email never leaves it
+        SP1 zkVM · DKIM (RFC 6376)
       </footer>
     </main>
   )

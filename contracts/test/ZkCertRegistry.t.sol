@@ -204,8 +204,8 @@ contract ZkCertRegistryLogicTest is Test {
     }
 }
 
-/// The real SP1 gateway + v6.1.0 Groth16 verifier, without a fixture: a mock or empty proof
-/// (what SP1_PROVER=mock bundles contain) must never pass.
+/// The real SP1 gateway + v6.1.0 Groth16 verifier, without a fixture: a mock or empty proof (what
+/// SP1_PROVER=mock bundles contain) must never pass.
 contract ZkCertRegistryGatewayTest is Test {
     ZkCertRegistry registry;
     bytes32 constant VKEY = bytes32(uint256(1));
@@ -265,8 +265,8 @@ contract ZkCertRegistryProofTest is Test {
 
     bool hasFixture;
 
-    /// Skips every test until the Groth16 fixture exists (it needs SP1_PROVER=network or a
-    /// machine with more than 16 GB RAM; see README).
+    /// Skips every test until the Groth16 fixture exists (it needs SP1_PROVER=network or a machine
+    /// with more than 16 GB RAM; see README).
     modifier withFixture() {
         if (!hasFixture) {
             vm.skip(true);

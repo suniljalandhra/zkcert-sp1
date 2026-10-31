@@ -1,5 +1,4 @@
-//! Offline tests for DKIM discovery. Each test signs a synthetic Coursera-style email with a
-//! throwaway RSA key generated at runtime and pins that key, so no DNS or personal data is used.
+//! Offline tests for DKIM discovery.
 
 use std::sync::OnceLock;
 
@@ -176,8 +175,7 @@ async fn unsigned_email_has_no_selection() {
 
 #[tokio::test]
 async fn missing_pinned_key_never_falls_back_to_dns() {
-    // Pin a different name. The selection must fail closed. (The no-DNS-fallback property itself
-    // is enforced by PinnedTxt answering every miss; a live-DNS pass can't be built offline.)
+    // Pin a different name.
     let r = run(
         &sign(MESSAGE),
         "other._domainkey.t.mail.coursera.org",

@@ -1,19 +1,11 @@
 //! Verification of zkCert proofs in SP1's "compressed" mode: a STARK that can be checked off-chain
 //! in milliseconds, without the Groth16 wrap (which needs far more memory to produce).
-//!
-//! The proof is checked against the program's KoalaBear vkey digest. That digest maps one-to-one
-//! to the `bytes32` vkey used everywhere else (config/program.json, the registry), so callers get
-//! the `bytes32` back and must check it is an accepted program version.
 
 use slop_algebra::PrimeField32;
 use sp1_primitives::SP1Field;
 use sp1_verifier::compressed::SP1CompressedVerifierRaw;
 
 /// `bytes32` vkey (`0x`-prefixed, 64 hex digits) of a bincode-encoded `[SP1Field; 8]` vkey digest.
-///
-/// Same value as sp1-sdk's `HashableKey::bytes32`: the eight 31-bit field elements are packed
-/// big-endian into one integer (`koalabears_to_bn254` in sp1-hypercube). 8 × 31 = 248 bits stays
-/// below the BN254 modulus, so no reduction happens and the packing is injective.
 pub fn vkey_bytes32(vkey_hash: &[u8]) -> Result<String, String> {
     let digest: [SP1Field; 8] =
         bincode::deserialize(vkey_hash).map_err(|e| format!("vkey hash: {e}"))?;
@@ -37,7 +29,7 @@ pub fn vkey_bytes32(vkey_hash: &[u8]) -> Result<String, String> {
 }
 
 /// Verifies a compressed proof (bincode `SP1Proof`) for `public_values` under `vkey_hash`.
-/// Returns the program's `bytes32` vkey, which the caller must find in its accepted set.
+/// Returns the program's `bytes32` vkey; the caller must check it is an accepted version.
 pub fn verify_compressed(
     proof: &[u8],
     public_values: &[u8],

@@ -1,6 +1,5 @@
-//! zkCert guest: proves that a Coursera/Udemy completion email carries a valid DKIM signature
-//! and commits only the facts in `PublicValues`. All logic lives in `zkcert_lib::verify` so the
-//! host can run the identical checks before proving.
+//! zkCert guest: proves that a Coursera/Udemy completion email carries a valid DKIM signature and
+//! commits only the facts in `PublicValues`.
 
 #![no_main]
 sp1_zkvm::entrypoint!(main);

@@ -1,6 +1,4 @@
-//! The DKIM key records (config/dkim-keys.json) the host needs to build guest inputs. What the
-//! proof accepts is decided by the table compiled into the guest (`zkcert_lib::keys::KEYS`);
-//! a test below keeps the two in step. DNS answers are untrusted and keys rotate.
+//! The DKIM key records (config/dkim-keys.json) the host needs to build guest inputs.
 
 use std::collections::HashMap;
 

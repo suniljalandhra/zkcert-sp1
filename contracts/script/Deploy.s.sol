@@ -8,12 +8,6 @@ import {IEAS, ISchemaRegistry} from "../src/interfaces/IEAS.sol";
 
 /// Deploys ZkCertRegistry accepting the program versions in config/program.json `accepted`, and
 /// registers the EAS schema (if new).
-///
-///   forge script script/Deploy.s.sol --rpc-url $BASE_SEPOLIA_RPC_URL --private-key $PRIVATE_KEY --broadcast
-///
-/// Defaults are Base Sepolia: SP1 Groth16 gateway (sp1-contracts deployments/84532.json) and the
-/// EAS predeploys. Override with SP1_GATEWAY, EAS, SCHEMA_REGISTRY for another chain, and OWNER
-/// for the registry owner (default: the broadcaster).
 contract Deploy is Script {
     function run() external returns (ZkCertRegistry registry) {
         address gateway = vm.envOr("SP1_GATEWAY", address(0x397A5f7f3dBd538f23DE225B51f532c34448dA9B));

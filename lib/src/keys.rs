@@ -1,9 +1,4 @@
-//! The DKIM keys the guest accepts. Compiled into the program, so the vkey commits to this table:
-//! adding, removing or re-windowing a key is a new program version (new vkey), which verifiers and
-//! the registry accept explicitly. DNS is never consulted at proof time.
-//!
-//! The records these hashes come from are in config/dkim-keys.json (the host needs the full key);
-//! `script/src/keys.rs` tests that the two lists agree.
+//! The DKIM keys the guest accepts.
 
 /// One accepted key. The signed DKIM `t=` must satisfy `valid_from <= t < valid_to`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,8 +16,8 @@ pub struct PinnedKey {
 }
 
 impl PinnedKey {
-    /// A key with a bound needs the signed `t=` to check it; an unbounded key accepts any `t=`
-    /// and none (Udemy's signatures carry no `t=`).
+    /// A key with a bound needs the signed `t=` to check it; an unbounded key accepts any `t=` and
+    /// none (Udemy's signatures carry no `t=`).
     pub fn bounded(&self) -> bool {
         self.valid_from > 0 || self.valid_to < u64::MAX
     }
@@ -58,17 +53,9 @@ const fn hex32(s: &str) -> [u8; 32] {
 /// 2016-06-01T00:00:00Z.
 const JUNE_2016: u64 = 1_464_739_200;
 
-/// Accepted keys (DNS fetched 2026-10-31; both still published then).
-///
-/// - Coursera `scph0616`: RSA-1024 via SparkPost, whose selectors are named `scph<MMYY>`, so the
-///   key cannot predate June 2016 (an inference from the naming scheme, not a published date).
-///   Still live, so no upper bound yet. When Coursera retires it, a new version can set `valid_to`
-///   (this only stops an honest signer's later use). If it is compromised, a window does not help,
-///   because the signer chooses `t=`: remove the key and retire every accepted vkey whose table has it.
-///   Being bounded, it requires `t=`; Coursera's signatures carry one, so this fails closed only on
-///   a signature without `t=`.
-/// - Udemy `s1`: RSA-2048 via SendGrid. Udemy's signatures have no `t=`, so a window could never
-///   be checked; the key is unbounded and rotation relies on a new program version alone.
+/// Accepted keys (DNS fetched 2026-10-31). Coursera's lower bound follows SparkPost's `scph<MMYY>`
+/// selector naming. Udemy signs without `t=`, so its key has no window. A window does not stop a
+/// leaked key (the signer picks `t=`): remove the key and retire every vkey that contains it.
 pub const KEYS: &[PinnedKey] = &[
     PinnedKey {
         name: "scph0616._domainkey.t.mail.coursera.org",

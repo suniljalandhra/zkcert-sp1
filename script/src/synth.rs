@@ -1,5 +1,4 @@
-//! Synthetic completion emails signed with a throwaway key (RFC 6376 relaxed/relaxed). Used by
-//! tests and to make the committed contract fixture, so no real email is ever committed.
+//! Synthetic completion emails signed with a throwaway key (RFC 6376 relaxed/relaxed).
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use rsa::{pkcs8::EncodePublicKey, Pkcs1v15Sign, RsaPrivateKey};

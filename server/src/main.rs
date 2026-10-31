@@ -1,13 +1,4 @@
 //! zkCert prover API.
-//!
-//! - `POST /prove` (multipart: `eml` file, `wallet`, `disclose`, optional `proofSystem` =
-//!   `compressed` (default) | `groth16`) -> 202 `{ jobId, preview }`
-//! - `GET /prove/{id}` -> `{ status, error?, bundle? }`
-//! - `GET /vkey`, `GET /keys`, `GET /health`
-//!
-//! Privacy: email bytes are never written to disk or logged. The upload is checked on the host
-//! (same `verify` as the guest), then only the guest input is kept in memory until its proof is
-//! done, and dropped. Logs contain job ids and states only.
 
 use std::{
     collections::HashMap,
@@ -316,8 +307,8 @@ async fn main() {
         )
         .init();
 
-    // Bind to localhost by default: uploads are personal email, so exposing the server must be
-    // an explicit choice.
+    // Bind to localhost by default: uploads are personal email, so exposing the server must be an
+    // explicit choice.
     let addr: SocketAddr = std::env::var("ZKCERT_SERVER_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:8080".into())
         .parse()
@@ -383,8 +374,8 @@ mod tests {
         }
     }
 
-    /// A server whose records and key table hold one throwaway key, with a fake prover that
-    /// returns a mock bundle of the values the guest would commit.
+    /// A server whose records and key table hold one throwaway key, with a fake prover that returns
+    /// a mock bundle of the values the guest would commit.
     fn mock_prover() -> Result<ProveFn> {
         Ok(Box::new(|input: &GuestInput, system: ProofSystem| {
             let v = verify_with(input, &[pinned(&input.public_key_der)])?;

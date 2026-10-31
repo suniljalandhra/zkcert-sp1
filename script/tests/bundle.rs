@@ -1,10 +1,7 @@
 //! `verify_bundle`: every check except Groth16 runs on a mock bundle of a synthetic email; the
-//! Groth16 checks need the real fixture (`contracts/src/fixtures/groth16-proof.json`, a proof of
-//! a real allowlisted email made with `SP1_PROVER=network`, see README) and are `#[ignore]`d
-//! until it exists: `cargo test --release -p zkcert-script --test bundle -- --ignored`.
-//!
-//! The DKIM key is not a bundle check any more: the guest only accepts its compiled key table
-//! (tests/verify.rs), so accepting the vkey is accepting the table.
+//! Groth16 checks need the real fixture (`contracts/src/fixtures/groth16-proof.json`, a proof of a
+//! real allowlisted email made with `SP1_PROVER=network`, see README) and are `#[ignore]`d until it
+//! exists: `cargo test --release -p zkcert-script --test bundle -- --ignored`.
 
 use alloy_primitives::hex;
 use alloy_sol_types::SolType;
@@ -215,8 +212,8 @@ fn compressed_garbage_proof_is_rejected() {
     assert!(e.contains("compressed proof invalid"), "{e}");
 }
 
-/// A real compressed proof of a real email (git-ignored; make it with
-/// `zkcert prove fixtures/your.eml --wallet 0x… --out fixtures/compressed-proof.json`).
+/// A real compressed proof of a real email (git-ignored; make it with `zkcert prove
+/// fixtures/your.eml --wallet 0x… --out fixtures/compressed-proof.json`).
 fn compressed_fixture() -> Option<ProofBundle> {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),

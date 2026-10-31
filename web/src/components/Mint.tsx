@@ -30,9 +30,7 @@ export function Mint({ bundle }: { bundle: ProofBundle | null }) {
     return (
       <section className="stack">
         <p className="muted">
-          This is an off-chain proof: anyone can verify it in the Verify tab, for free. To record it on-chain, generate an <strong>on-chain
-          (Groth16)</strong> proof in the Generate tab. That needs the prover server to run with <code>SP1_PROVER=network</code> (Succinct&apos;s
-          prover network, which receives your email) or a machine with much more memory than 16 GB.
+          Off-chain proofs can&apos;t be minted. Generate an <strong>on-chain</strong> proof (needs <code>SP1_PROVER=network</code>).
         </p>
       </section>
     )
@@ -74,8 +72,7 @@ export function Mint({ bundle }: { bundle: ProofBundle | null }) {
   return (
     <section className="stack">
       <p className="muted">
-        Records the certificate as an EAS attestation to the bound wallet. The registry verifies the proof again, checks it is from an accepted program version, and that
-        this certificate (nullifier) was not claimed before. The recipient wallet becomes public on-chain.
+        Records the certificate as an EAS attestation to the bound wallet, once per certificate. The wallet becomes public.
       </p>
       <p>
         Bound wallet: <span className="mono">{v.wallet}</span>

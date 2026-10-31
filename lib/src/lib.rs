@@ -18,7 +18,7 @@ sol! {
         /// The course name, or empty unless the user chose to disclose it.
         string courseName;
         /// DKIM t= (when the platform signed the email) rounded down to the UTC day, in Unix
-        /// seconds; 0 when there is no t= (Udemy). Not the course completion date.
+        /// seconds; 0 when there is no t= (Udemy).
         uint64 emailSignedAt;
         /// keccak256 of the DKIM public key (SPKI DER); the guest only accepts keys in lib/src/keys.rs.
         bytes32 dkimKeyHash;

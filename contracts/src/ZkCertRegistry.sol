@@ -15,14 +15,8 @@ struct PublicValues {
     address wallet;
 }
 
-/// @title ZkCertRegistry
-/// @notice Verifies zkCert SP1 proofs of Coursera/Udemy completion emails and records each
-/// certificate once as an EAS attestation to the bound wallet.
-/// @dev Trust: each zkCert program version compiles in its own DKIM key table (lib/src/keys.rs)
-/// and rejects any other key inside the proof. Accepting a vkey therefore accepts that version's
-/// key table; key rotation or revocation is a new program version plus `setVKey`. This contract
-/// adds that the proof is for an accepted version, that only the bound wallet claims, and that
-/// each certificate (nullifier) is claimed once across all versions.
+/// @title ZkCertRegistry @notice Verifies zkCert SP1 proofs of Coursera/Udemy completion emails and
+/// records each certificate once as an EAS attestation to the bound wallet.
 contract ZkCertRegistry {
     /// EAS schema the attestations use (register it with exactly this string).
     string public constant SCHEMA =
@@ -62,9 +56,6 @@ contract ZkCertRegistry {
     }
 
     /// @param _verifier The SP1VerifierGateway (routes by proof selector; never a fixed verifier).
-    /// @param _vkeys Initially accepted program versions (config/program.json `accepted`).
-    /// The EAS schema UID is derived from SCHEMA (EAS: keccak256(schema, resolver, revocable)) so
-    /// the two cannot drift; Deploy.s.sol registers SCHEMA if it is not registered yet.
     constructor(ISP1Verifier _verifier, bytes32[] memory _vkeys, IEAS _eas, address _owner) {
         if (address(_verifier) == address(0) || address(_eas) == address(0) || _owner == address(0)) {
             revert ZeroAddress();
@@ -80,8 +71,7 @@ contract ZkCertRegistry {
         }
     }
 
-    /// @notice Accept or retire a program version. Retiring one stops new claims made with its
-    /// proofs; attestations already issued are not revoked.
+    /// @notice Accept or retire a program version.
     function setVKey(bytes32 vkey, bool accepted) external onlyOwner {
         acceptedVKeys[vkey] = accepted;
         emit VKeySet(vkey, accepted);
@@ -93,8 +83,7 @@ contract ZkCertRegistry {
         owner = newOwner;
     }
 
-    /// @notice Every check except the wallet and nullifier. Reverts if invalid; usable as an
-    /// eth_call to check a bundle against this registry's accepted versions.
+    /// @notice Every check except the wallet and nullifier.
     function verify(bytes32 vkey, bytes calldata publicValues, bytes calldata proof)
         public
         view
@@ -105,8 +94,7 @@ contract ZkCertRegistry {
         return abi.decode(publicValues, (PublicValues));
     }
 
-    /// @notice Verify and attest. Only the wallet bound inside the proof can claim, so a copied
-    /// proof (front-running, sharing) is useless to anyone else.
+    /// @notice Verify and attest.
     function claim(bytes32 vkey, bytes calldata publicValues, bytes calldata proof) external returns (bytes32 uid) {
         PublicValues memory v = verify(vkey, publicValues, proof);
         if (msg.sender != v.wallet) revert WrongWallet(v.wallet, msg.sender);

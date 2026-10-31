@@ -1,8 +1,4 @@
 //! DKIM canonicalization and signed-header selection (RFC 6376 §3.4, §3.7, §5.4.2).
-//!
-//! The host uses this to build the exact bytes the signer hashed. The guest does not need it:
-//! it hashes whatever bytes it is given, and the RSA signature / `bh=` decide whether they are
-//! the signed ones. A bug here can only make a genuine email fail, never make a forgery pass.
 
 /// A header field as it appears in the message: name, and raw value after the ':' (folding kept,
 /// final CRLF removed).
@@ -31,8 +27,7 @@ pub fn parse_c(c: &str) -> Option<(Canon, Canon)> {
     }
 }
 
-/// Splits a message into header fields and body at the first empty line. Requires CRLF line
-/// endings (RFC 5322 §2.1); callers convert bare-LF files first.
+/// Splits a message into header fields and body at the first empty line.
 pub fn split_message(raw: &[u8]) -> Option<(Vec<RawHeader>, &[u8])> {
     let end = raw.windows(4).position(|w| w == b"\r\n\r\n")?;
     let head = std::str::from_utf8(&raw[..end]).ok()?;

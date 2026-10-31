@@ -1,5 +1,5 @@
-//! Host-side helpers for zkCert: email parsing, DKIM discovery, guest inputs, proving and
-//! proof bundles.
+//! Host-side helpers for zkCert: email parsing, DKIM discovery, guest inputs, proving and proof
+//! bundles.
 
 pub mod bundle;
 pub mod discover;

@@ -1,6 +1,4 @@
 //! DKIM-Signature tag parsing (RFC 6376 §3.2 tag-list, §3.5 signature tags).
-//!
-//! Pure Rust with no dependencies so the same code runs on the host and in the SP1 guest.
 
 use std::fmt;
 
@@ -35,8 +33,7 @@ impl fmt::Display for TagError {
 
 impl std::error::Error for TagError {}
 
-/// FWS characters (RFC 6376 §2.8: WSP and CRLF). Deliberately not Unicode whitespace, so the
-/// host and the guest can never disagree on what is stripped.
+/// FWS characters (RFC 6376 §2.8: WSP and CRLF).
 fn is_fws(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\r' | '\n')
 }
@@ -46,8 +43,6 @@ fn trim_fws(s: &str) -> &str {
 }
 
 /// Splits a tag-list into `(name, value)` pairs with surrounding FWS trimmed.
-/// Values keep their inner FWS; callers strip it where the RFC says to ignore it.
-/// Values may only contain VALCHAR (%x21-3A / %x3C-7E) and FWS (§3.2 tval).
 pub fn parse_tag_list(input: &str) -> Result<Vec<(String, String)>, TagError> {
     let mut tags: Vec<(String, String)> = Vec::new();
     for spec in input.split(';') {
@@ -84,8 +79,7 @@ fn strip_ws(s: &str) -> String {
     s.chars().filter(|c| !is_fws(*c)).collect()
 }
 
-/// The DKIM-Signature tags zkCert inspects. `b`, `bh` and `h` have whitespace removed
-/// (§3.5: whitespace in b= and bh= is ignored; h= allows FWS around ':').
+/// The DKIM-Signature tags zkCert inspects.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DkimTags {
     pub v: String,

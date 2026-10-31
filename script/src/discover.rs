@@ -1,8 +1,5 @@
 //! Phase 1 discovery: inspect every DKIM-Signature in a .eml, fetch (or pin) each public key,
 //! verify on the host with `mail-auth`, and show the body fields the guest will parse.
-//!
-//! Nothing here is trusted by the proof; it exists to learn the real email formats and to
-//! check our own tag parsing against an established DKIM implementation.
 
 use std::{borrow::Borrow, collections::HashMap, hash::Hash, time::Instant};
 
@@ -21,8 +18,7 @@ use zkcert_lib::{
     platform::{coursera, Platform},
 };
 
-/// Where public keys come from. DNS is untrusted; pinned records make runs reproducible and
-/// let tests run offline.
+/// Where public keys come from.
 pub enum KeySource {
     Dns,
     /// `<selector>._domainkey.<domain>` (no trailing dot, lowercase) -> TXT record value.
@@ -120,8 +116,7 @@ pub fn key_info(record: &str) -> Result<KeyInfo> {
 }
 
 /// A mail-auth DNS cache pre-filled with the keys we resolved, so mail-auth verifies against
-/// exactly the key we report. Every miss answers "not found", so mail-auth never falls back to
-/// querying DNS itself.
+/// exactly the key we report.
 struct PinnedTxt(HashMap<Box<str>, TxtRecord>);
 
 impl ResolverCache<Box<str>, TxtRecord> for PinnedTxt {
@@ -175,7 +170,7 @@ impl DnsCache for PinnedTxt {
     }
 }
 
-/// The guest's acceptance rules (docs/ARCHITECTURE.md §3), evaluated on the host.
+/// The guest's acceptance rules, evaluated on the host.
 pub fn guest_checks(tags: &DkimTags, facts: HeaderFacts) -> Vec<(&'static str, bool)> {
     let sig_platform = Platform::from_domain(&tags.d);
     vec![
@@ -189,8 +184,8 @@ pub fn guest_checks(tags: &DkimTags, facts: HeaderFacts) -> Vec<(&'static str, b
             "From domain matches d= platform",
             sig_platform.is_some() && sig_platform == facts.from_platform,
         ),
-        // DKIM signs the bottom-most instance of a header, so an extra unsigned From/Subject
-        // could be shown to users instead of the signed one. Require exactly one of each.
+        // DKIM signs the bottom-most instance of a header, so an extra unsigned From/Subject could
+        // be shown to users instead of the signed one.
         (
             "exactly one From header with one mailbox",
             facts.from_headers == 1 && facts.from_mailboxes == 1,
@@ -274,8 +269,7 @@ pub async fn analyze(raw: &[u8], keys: &KeySource) -> Result<Report> {
             .map(|t| guest_checks(t, facts))
             .unwrap_or_default();
         let host_verify = if tags.is_ok() {
-            // Overwritten below if mail-auth verified this header. In strict mode it refuses to
-            // parse some signatures at all (e.g. l= != 0), which then yield no output.
+            // Overwritten below if mail-auth verified this header.
             "rejected by mail-auth parser"
         } else {
             "not evaluated (invalid tags)"

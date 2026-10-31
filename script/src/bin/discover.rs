@@ -1,9 +1,4 @@
 //! Inspect the DKIM signatures and parseable fields of a completion email.
-//!
-//! ```shell
-//! cargo run --release --bin discover -- fixtures/sample.eml
-//! cargo run --release --bin discover -- fixtures/sample.eml --key s._domainkey.d=key.txt
-//! ```
 
 use std::{collections::HashMap, path::PathBuf};
 
@@ -16,8 +11,8 @@ use zkcert_script::discover::{analyze, KeySource};
 struct Args {
     /// Path to the .eml file.
     eml: PathBuf,
-    /// Use a pinned key record instead of DNS: `<selector>._domainkey.<domain>=<file>`, where
-    /// the file holds the TXT record value. Repeatable. Disables DNS entirely.
+    /// Use a pinned key record instead of DNS: `<selector>._domainkey.<domain>=<file>`, where the
+    /// file holds the TXT record value.
     #[arg(long = "key")]
     keys: Vec<String>,
 }

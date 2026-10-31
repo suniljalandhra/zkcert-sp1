@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 /// Minimal subset of the Ethereum Attestation Service interfaces (eas-contracts v1.x,
-/// contracts/IEAS.sol and ISchemaRegistry.sol). Vendored to avoid pulling the whole repository.
+/// contracts/IEAS.sol and ISchemaRegistry.sol).
 
 struct AttestationRequestData {
     address recipient;

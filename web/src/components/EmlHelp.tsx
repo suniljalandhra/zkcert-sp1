@@ -13,10 +13,7 @@ export function EmlHelp() {
           <b>Apple Mail:</b> select the email → File → <i>Save As…</i> → format <i>Raw Message Source</i>.
         </li>
       </ul>
-      <p className="muted">
-        Do not forward or edit the email first: forwarding re-signs it with your provider’s key and any edit breaks the DKIM signature. Search your inbox for
-        “Your Certificate is Ready” (Coursera) or “Your completion certificate is ready” (Udemy).
-      </p>
+      <p className="muted">Download the original. Forwarded or edited emails fail the DKIM check.</p>
     </details>
   )
 }

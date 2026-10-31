@@ -1,14 +1,10 @@
 //! Minimal MIME decoding for the guest: header lines of the signed-header blob, quoted-printable
 //! (RFC 2045 §6.7), encoded words (RFC 2047), and multipart part selection (RFC 2046 §5.1).
-//!
-//! Only what Coursera and Udemy completion emails need. Anything unexpected is an error, never a
-//! best-effort guess.
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 
 /// Splits a signed-header blob (canonicalized, CRLF-separated, last line without CRLF) into
-/// `(lowercase name, value trimmed of FWS)`. Lines starting with WSP continue the previous field,
-/// so a header value can never be mistaken for a new field.
+/// `(lowercase name, value trimmed of FWS)`.
 pub fn header_fields(blob: &str) -> Option<Vec<(String, String)>> {
     let mut out: Vec<(String, String)> = Vec::new();
     for line in blob.split("\r\n") {
@@ -54,8 +50,7 @@ pub fn qp_decode(input: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Decodes RFC 2047 encoded words (UTF-8 or US-ASCII, B or Q). Whitespace between two adjacent
-/// encoded words is dropped (§6.2). Text without encoded words is returned unchanged.
+/// Decodes RFC 2047 encoded words (UTF-8 or US-ASCII, B or Q).
 pub fn decode_words(value: &str) -> Option<String> {
     let mut out = String::new();
     let mut rest = value;
@@ -109,8 +104,7 @@ pub fn param(value: &str, name: &str) -> Option<String> {
     })
 }
 
-/// The decoded content of the single `text/plain` part of a multipart body. Errors if there are
-/// zero or several such parts, or the part uses an encoding we do not handle.
+/// The decoded content of the single `text/plain` part of a multipart body.
 pub fn text_plain_part(body: &[u8], boundary: &str) -> Option<String> {
     if boundary.is_empty() {
         return None;
