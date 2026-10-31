@@ -4,7 +4,7 @@ use alloy_sol_types::SolType;
 use anyhow::{bail, Result};
 use sp1_sdk::{
     blocking::{EnvProver, EnvProvingKey, MockProver, ProveRequest, Prover, ProverClient},
-    include_elf, Elf, HashableKey, ProvingKey, SP1Stdin,
+    include_elf, Elf, HashableKey, ProvingKey, SP1Proof, SP1Stdin,
 };
 use zkcert_lib::{verify::GuestInput, PublicValues};
 
@@ -47,11 +47,37 @@ fn stdin(input: &GuestInput) -> SP1Stdin {
     stdin
 }
 
+/// Which proof to produce.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProofSystem {
+    /// SP1's compressed STARK: made locally on a laptop, verified off-chain (CLI or browser).
+    Compressed,
+    /// The compressed proof wrapped in Groth16: ~260 bytes, verifiable on-chain. The wrap needs far
+    /// more memory than a 16 GB machine has, so in practice it needs `SP1_PROVER=network`.
+    Groth16,
+}
+
+impl ProofSystem {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "compressed" => Some(ProofSystem::Compressed),
+            "groth16" => Some(ProofSystem::Groth16),
+            _ => None,
+        }
+    }
+}
+
+/// `SP1_PROVER` as configured (`cpu` when unset, as in sp1-sdk).
+pub fn prover_kind() -> String {
+    std::env::var("SP1_PROVER").unwrap_or_else(|_| "cpu".into())
+}
+
 /// The proof system label for bundles: `SP1_PROVER=mock` produces no real proof.
-pub fn proof_system() -> &'static str {
-    match std::env::var("SP1_PROVER").as_deref() {
-        Ok("mock") => "mock",
-        _ => "groth16",
+pub fn proof_label(system: ProofSystem) -> &'static str {
+    match (prover_kind().as_str(), system) {
+        ("mock", _) => "mock",
+        (_, ProofSystem::Compressed) => "compressed",
+        (_, ProofSystem::Groth16) => "groth16",
     }
 }
 
@@ -80,14 +106,36 @@ impl ZkProver {
         ))
     }
 
-    /// A Groth16 proof (on-chain verifiable) packaged as a bundle.
-    pub fn prove(&self, input: &GuestInput) -> Result<ProofBundle> {
-        let proof = self.client.prove(&self.pk, stdin(input)).groth16().run()?;
-        ProofBundle::new(
-            proof_system(),
-            self.pk.verifying_key().bytes32(),
-            &proof.bytes(),
-            proof.public_values.as_slice(),
-        )
+    /// A proof packaged as a bundle.
+    pub fn prove(&self, input: &GuestInput, system: ProofSystem) -> Result<ProofBundle> {
+        let vk = self.pk.verifying_key();
+        let request = self.client.prove(&self.pk, stdin(input));
+        let label = proof_label(system);
+        match system {
+            ProofSystem::Groth16 => {
+                let proof = request.groth16().run()?;
+                ProofBundle::new(
+                    label,
+                    vk.bytes32(),
+                    &proof.bytes(),
+                    proof.public_values.as_slice(),
+                )
+            }
+            ProofSystem::Compressed => {
+                let proof = request.compressed().run()?;
+                let bytes = match &proof.proof {
+                    SP1Proof::Compressed(_) => bincode::serialize(&proof.proof)?,
+                    // The mock prover returns an empty proof of another kind; nothing to encode.
+                    _ if label == "mock" => Vec::new(),
+                    _ => bail!("the prover did not return a compressed proof"),
+                };
+                let mut bundle =
+                    ProofBundle::new(label, vk.bytes32(), &bytes, proof.public_values.as_slice())?;
+                bundle.vkey_hash = Some(alloy_primitives::hex::encode_prefixed(
+                    bincode::serialize(&vk.hash_koalabear())?,
+                ));
+                Ok(bundle)
+            }
+        }
     }
 }

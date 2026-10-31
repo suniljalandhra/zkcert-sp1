@@ -16,6 +16,9 @@ type Phase =
 // Server limit is 1 MiB for the whole multipart body; leave room for the other fields.
 const MAX_BYTES = 1024 * 1024 - 4096
 
+type ProofSystem = 'compressed' | 'groth16'
+type Health = { proverKind: string; local: boolean; prover: string }
+
 export function Generate({ onProof }: { onProof: (b: ProofBundle) => void }) {
   const { address } = useAccount()
   const [file, setFile] = useState<File | null>(null)
@@ -23,6 +26,16 @@ export function Generate({ onProof }: { onProof: (b: ProofBundle) => void }) {
   const [walletInput, setWallet] = useState<string | null>(null)
   const wallet = walletInput ?? address ?? ''
   const [disclose, setDisclose] = useState(true)
+  const [system, setSystem] = useState<ProofSystem>('compressed')
+  const [health, setHealth] = useState<Health | null>(null)
+  useEffect(() => {
+    fetch(`${API_URL}/health`)
+      .then((r) => r.json())
+      .then(setHealth)
+      .catch(() => setHealth(null))
+  }, [])
+  // A local CPU prover runs out of memory on the Groth16 wrap on typical laptops.
+  const groth16Ok = health !== null && health.proverKind !== 'cpu'
   const [phase, setPhase] = useState<Phase>({ k: 'idle' })
   const [copied, setCopied] = useState(false)
   const [drag, setDrag] = useState(false)
@@ -80,6 +93,7 @@ export function Generate({ onProof }: { onProof: (b: ProofBundle) => void }) {
     form.append('eml', file)
     form.append('wallet', wallet)
     form.append('disclose', String(disclose))
+    form.append('proofSystem', system)
     try {
       const r = await fetch(`${API_URL}/prove`, { method: 'POST', body: form })
       const j = await r.json().catch(() => ({}))
@@ -132,6 +146,35 @@ export function Generate({ onProof }: { onProof: (b: ProofBundle) => void }) {
         <span>Disclose the course name in the proof (otherwise only its hash is public)</span>
       </label>
 
+      <fieldset className="choice">
+        <legend>Proof type</legend>
+        <label className="check">
+          <input type="radio" name="system" checked={system === 'compressed'} onChange={() => setSystem('compressed')} />
+          <span>
+            <strong>Off-chain</strong> (recommended): made on the prover machine in about 1–2 minutes; anyone verifies it in the browser for free.
+          </span>
+        </label>
+        <label className="check">
+          <input type="radio" name="system" checked={system === 'groth16'} disabled={!groth16Ok} onChange={() => setSystem('groth16')} />
+          <span>
+            <strong>On-chain</strong> (Groth16): can be minted as an EAS attestation.{' '}
+            {!groth16Ok && <span className="muted">Needs the server to run with SP1_PROVER=network; a 16 GB machine runs out of memory.</span>}
+          </span>
+        </label>
+      </fieldset>
+
+      {health ? (
+        health.local ? (
+          <p className="note">🔒 The prover runs on this machine ({health.proverKind}). Your email never leaves it, and is dropped after proving.</p>
+        ) : (
+          <p className="alert">
+            The prover uses Succinct&apos;s prover network: your email&apos;s signed headers and body are sent to it to make the proof.
+          </p>
+        )
+      ) : (
+        <p className="muted">Prover server not reachable at {API_URL}. Start it with <code>cargo run --release -p zkcert-server</code>.</p>
+      )}
+
       <button className="primary" disabled={!file || !walletOk || busy} onClick={submit}>
         {busy ? 'Working…' : 'Generate proof'}
       </button>
@@ -140,7 +183,11 @@ export function Generate({ onProof }: { onProof: (b: ProofBundle) => void }) {
       {(phase.k === 'queued' || phase.k === 'proving') && (
         <div className="card">
           <p>
-            <span className="spinner" /> {phase.k === 'queued' ? 'Signature valid. Waiting for the prover…' : 'Generating the Groth16 proof (this can take several minutes)…'}
+            <span className="spinner" /> {phase.k === 'queued'
+              ? 'Signature valid. Waiting for the prover…'
+              : system === 'compressed'
+                ? 'Generating the proof (about 1–2 minutes)…'
+                : 'Generating the on-chain Groth16 proof (this can take several minutes)…'}
           </p>
           <p className="muted">
             Detected: {phase.preview.platform} · {phase.preview.courseName || 'course hidden'}
@@ -172,7 +219,10 @@ function Done({ bundle, copied, setCopied }: { bundle: ProofBundle; copied: bool
         <button className="primary" onClick={() => download(bundle)}>Download zkcert-proof.json</button>
         <button onClick={() => navigator.clipboard.writeText(text).then(() => setCopied(true))}>{copied ? 'Copied' : 'Copy summary'}</button>
       </div>
-      <p className="muted">The server has deleted your email. Keep the proof file; anyone can verify it in the Verify tab.</p>
+      <p className="muted">
+        The prover has dropped your email. Keep the proof file{bundle.proofSystem === 'compressed' ? ` (${(bundle.proof.length / 2 / 1e6).toFixed(1)} MB)` : ''}; anyone can
+        verify it in the Verify tab.
+      </p>
     </div>
   )
 }

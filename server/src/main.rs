@@ -1,6 +1,7 @@
 //! zkCert prover API.
 //!
-//! - `POST /prove` (multipart: `eml` file, `wallet`, `disclose`) -> 202 `{ jobId, preview }`
+//! - `POST /prove` (multipart: `eml` file, `wallet`, `disclose`, optional `proofSystem` =
+//!   `compressed` (default) | `groth16`) -> 202 `{ jobId, preview }`
 //! - `GET /prove/{id}` -> `{ status, error?, bundle? }`
 //! - `GET /vkey`, `GET /keys`, `GET /health`
 //!
@@ -39,7 +40,7 @@ use zkcert_script::{
     discover::KeySource,
     inputs::prepare,
     keys::{self, KnownKey},
-    prover::{pinned_vkey, program_vkey, ZkProver},
+    prover::{pinned_vkey, program_vkey, prover_kind, ProofSystem, ZkProver},
 };
 
 /// Completion emails are tens of KB; anything near this is not one.
@@ -56,13 +57,16 @@ enum Job {
     Failed { error: String },
 }
 
-type ProveFn = Box<dyn Fn(&GuestInput) -> Result<ProofBundle> + Send>;
+type ProveFn = Box<dyn Fn(&GuestInput, ProofSystem) -> Result<ProofBundle> + Send>;
+type QueueItem = (String, GuestInput, ProofSystem);
 
 struct AppState {
     jobs: Mutex<HashMap<String, (Job, Instant)>>,
     /// False once prover setup has failed; uploads are then refused before any email is read.
     prover_ok: AtomicBool,
-    queue: mpsc::Sender<(String, GuestInput)>,
+    queue: mpsc::Sender<QueueItem>,
+    /// `SP1_PROVER`: `cpu`/`cuda` prove on this machine; `network` sends inputs to Succinct.
+    prover_kind: String,
     /// Key records for building guest inputs (config/dkim-keys.json).
     records: Vec<KnownKey>,
     /// The guest's key table, so a key the guest would reject is refused before proving.
@@ -82,7 +86,7 @@ fn set_job(state: &AppState, id: &str, job: Job) {
 /// One proof at a time on a dedicated thread: proving is CPU- and memory-heavy.
 fn spawn_worker(
     state: Shared,
-    mut rx: mpsc::Receiver<(String, GuestInput)>,
+    mut rx: mpsc::Receiver<QueueItem>,
     make: impl FnOnce() -> Result<ProveFn> + Send + 'static,
 ) {
     std::thread::spawn(move || {
@@ -94,7 +98,7 @@ fn spawn_worker(
                 None
             }
         };
-        while let Some((id, input)) = rx.blocking_recv() {
+        while let Some((id, input, system)) = rx.blocking_recv() {
             let Some(prove) = &prove else {
                 set_job(
                     &state,
@@ -108,7 +112,7 @@ fn spawn_worker(
             set_job(&state, &id, Job::Proving);
             tracing::info!(job = %id, "proving");
             // A panicking prover must fail this job, not kill the worker for every later one.
-            let job = match std::panic::catch_unwind(AssertUnwindSafe(|| prove(&input))) {
+            let job = match std::panic::catch_unwind(AssertUnwindSafe(|| prove(&input, system))) {
                 Ok(Ok(bundle)) => Job::Done {
                     bundle: Box::new(bundle),
                 },
@@ -155,7 +159,15 @@ async fn health(State(s): State<Shared>) -> Json<serde_json::Value> {
     } else {
         "unavailable"
     };
-    Json(json!({ "status": "ok", "prover": prover, "version": env!("CARGO_PKG_VERSION") }))
+    // `local`: the email never leaves this machine (the UI says so only when this is true).
+    let local = matches!(s.prover_kind.as_str(), "cpu" | "cuda" | "mock");
+    Json(json!({
+        "status": "ok",
+        "prover": prover,
+        "proverKind": s.prover_kind,
+        "local": local,
+        "version": env!("CARGO_PKG_VERSION"),
+    }))
 }
 
 fn unavailable(msg: &str) -> ApiError {
@@ -197,6 +209,7 @@ async fn submit(
         TrySendError::Closed(()) => unavailable("prover unavailable (see server logs)"),
     })?;
     let (mut eml, mut wallet, mut disclose) = (None, None, false);
+    let mut system = ProofSystem::Compressed;
     while let Some(field) = form.next_field().await.map_err(upload_error)? {
         match field.name() {
             Some("eml") => eml = Some(field.bytes().await.map_err(upload_error)?),
@@ -210,6 +223,11 @@ async fn submit(
             }
             Some("disclose") => {
                 disclose = field.text().await.map_err(|_| bad("bad disclose"))? == "true"
+            }
+            Some("proofSystem") => {
+                let text = field.text().await.map_err(|_| bad("bad proofSystem"))?;
+                system = ProofSystem::parse(text.trim())
+                    .ok_or_else(|| bad("proofSystem must be compressed or groth16"))?;
             }
             _ => {}
         }
@@ -233,7 +251,7 @@ async fn submit(
 
     let id = uuid::Uuid::new_v4().to_string();
     set_job(&s, &id, Job::Queued);
-    slot.send((id.clone(), prepared.input));
+    slot.send((id.clone(), prepared.input, system));
     tracing::info!(job = %id, "queued");
     Ok((
         StatusCode::ACCEPTED,
@@ -269,6 +287,7 @@ fn app(state: Shared, cors_origin: &str) -> Router {
 }
 
 fn new_state(
+    prover_kind: String,
     records: Vec<KnownKey>,
     table: Vec<PinnedKey>,
     vkey: String,
@@ -279,6 +298,7 @@ fn new_state(
         jobs: Mutex::new(HashMap::new()),
         prover_ok: AtomicBool::new(true),
         queue: tx,
+        prover_kind,
         records,
         table,
         vkey,
@@ -314,10 +334,16 @@ async fn main() {
         panic!("program vkey {vkey} != pinned {pinned}: rebuild, or run `zkcert vkey --write`");
     }
     tracing::info!(%vkey, prover = %std::env::var("SP1_PROVER").unwrap_or_else(|_| "cpu".into()), "program loaded");
-    let state = new_state(keys::allowlist(), KEYS.to_vec(), vkey, || {
-        let prover = ZkProver::from_env()?;
-        Ok(Box::new(move |input: &GuestInput| prover.prove(input)) as ProveFn)
-    });
+    let state = new_state(
+        prover_kind(),
+        keys::allowlist(),
+        KEYS.to_vec(),
+        vkey,
+        || {
+            let prover = ZkProver::from_env()?;
+            Ok(Box::new(move |input: &GuestInput, system| prover.prove(input, system)) as ProveFn)
+        },
+    );
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -360,9 +386,14 @@ mod tests {
     /// A server whose records and key table hold one throwaway key, with a fake prover that
     /// returns a mock bundle of the values the guest would commit.
     fn mock_prover() -> Result<ProveFn> {
-        Ok(Box::new(|input: &GuestInput| {
+        Ok(Box::new(|input: &GuestInput, system: ProofSystem| {
             let v = verify_with(input, &[pinned(&input.public_key_der)])?;
-            ProofBundle::new("mock", "0xvkey".into(), &[], &PublicValues::abi_encode(&v))
+            // Records which proof system was requested, so tests can check it reaches the prover.
+            let label = match system {
+                ProofSystem::Compressed => "mock-compressed",
+                ProofSystem::Groth16 => "mock-groth16",
+            };
+            ProofBundle::new(label, "0xvkey".into(), &[], &PublicValues::abi_encode(&v))
         }) as ProveFn)
     }
 
@@ -393,7 +424,7 @@ mod tests {
         } else {
             vec![]
         };
-        let state = new_state(vec![known], table, "0xvkey".into(), make);
+        let state = new_state("mock".into(), vec![known], table, "0xvkey".into(), make);
         (
             app(state, "http://localhost:3000"),
             synth::sign(&mail, &key),
@@ -401,6 +432,10 @@ mod tests {
     }
 
     fn multipart(eml: &[u8], wallet: &str) -> Request<Body> {
+        multipart_with(eml, wallet, &[])
+    }
+
+    fn multipart_with(eml: &[u8], wallet: &str, extra: &[(&str, &str)]) -> Request<Body> {
         let b = "XBOUNDARYX";
         let mut body = Vec::new();
         body.extend(
@@ -416,6 +451,14 @@ mod tests {
             )
             .bytes(),
         );
+        for (name, value) in extra {
+            body.extend(
+                format!(
+                    "--{b}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+                )
+                .bytes(),
+            );
+        }
         body.extend(format!("--{b}\r\nContent-Disposition: form-data; name=\"disclose\"\r\n\r\ntrue\r\n--{b}--\r\n").bytes());
         Request::post("/prove")
             .header("content-type", format!("multipart/form-data; boundary={b}"))
@@ -474,7 +517,7 @@ mod tests {
     #[tokio::test]
     async fn prover_error_fails_the_job() {
         let (app, eml) =
-            test_app_with(|| Ok(Box::new(|_: &GuestInput| anyhow::bail!("boom")) as ProveFn));
+            test_app_with(|| Ok(Box::new(|_: &GuestInput, _| anyhow::bail!("boom")) as ProveFn));
         let job = run_job(&app, &eml).await;
         assert_eq!(
             (job["status"].as_str(), job["error"].as_str()),
@@ -485,7 +528,7 @@ mod tests {
     #[tokio::test]
     async fn prover_panic_fails_the_job_and_worker_survives() {
         let (app, eml) = test_app_with(|| {
-            Ok(Box::new(|_: &GuestInput| -> Result<ProofBundle> { panic!("crash") }) as ProveFn)
+            Ok(Box::new(|_: &GuestInput, _| -> Result<ProofBundle> { panic!("crash") }) as ProveFn)
         });
         for _ in 0..2 {
             let job = run_job(&app, &eml).await;
@@ -512,7 +555,7 @@ mod tests {
     async fn queue_full_is_503() {
         // A prover that blocks: 1 job proving + QUEUE_CAPACITY queued, then the next is refused.
         let (app, eml) = test_app_with(|| {
-            Ok(Box::new(|_: &GuestInput| -> Result<ProofBundle> {
+            Ok(Box::new(|_: &GuestInput, _| -> Result<ProofBundle> {
                 std::thread::sleep(Duration::from_secs(30));
                 anyhow::bail!("slow")
             }) as ProveFn)
@@ -580,12 +623,63 @@ mod tests {
             .await;
             if job["status"] == "done" {
                 assert_eq!(job["bundle"]["decoded"]["wallet"], WALLET);
+                // Compressed is the default: it is the proof a laptop can make.
+                assert_eq!(job["bundle"]["proofSystem"], "mock-compressed");
                 return;
             }
             assert_ne!(job["status"], "failed", "{job}");
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         panic!("job did not finish");
+    }
+
+    #[tokio::test]
+    async fn requested_proof_system_reaches_the_prover() {
+        let (app, eml) = test_app();
+        let (status, body) = call(
+            &app,
+            multipart_with(&eml, WALLET, &[("proofSystem", "groth16")]),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        let id = body["jobId"].as_str().unwrap().to_string();
+        for _ in 0..100 {
+            let (_, job) = call(
+                &app,
+                Request::get(format!("/prove/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            if job["status"] == "done" {
+                assert_eq!(job["bundle"]["proofSystem"], "mock-groth16");
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("job did not finish");
+    }
+
+    #[tokio::test]
+    async fn rejects_unknown_proof_system() {
+        let (app, eml) = test_app();
+        let (status, body) = call(
+            &app,
+            multipart_with(&eml, WALLET, &[("proofSystem", "plonk")]),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("proofSystem"));
+    }
+
+    #[tokio::test]
+    async fn health_reports_whether_proving_is_local() {
+        let (app, _) = test_app();
+        let (_, h) = call(&app, Request::get("/health").body(Body::empty()).unwrap()).await;
+        assert_eq!(
+            (h["proverKind"].as_str(), h["local"].as_bool()),
+            (Some("mock"), Some(true))
+        );
     }
 
     #[tokio::test]

@@ -7563,6 +7563,7 @@ dependencies = [
  "alloy-sol-types",
  "anyhow",
  "base64 0.22.1",
+ "bincode",
  "clap",
  "dotenv",
  "hex",
@@ -7579,6 +7580,7 @@ dependencies = [
  "tokio",
  "tracing",
  "zkcert-lib",
+ "zkcert-verifier",
 ]
 
 [[package]]
@@ -7602,6 +7604,18 @@ dependencies = [
  "uuid",
  "zkcert-lib",
  "zkcert-script",
+]
+
+[[package]]
+name = "zkcert-verifier"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "getrandom 0.2.17",
+ "slop-algebra",
+ "sp1-primitives",
+ "sp1-verifier",
+ "wasm-bindgen",
 ]
 
 [[package]]

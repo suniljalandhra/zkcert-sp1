@@ -1,7 +1,8 @@
-import { BaseError, ContractFunctionRevertedError, type Client, type Hex } from 'viem'
+import { BaseError, ContractFunctionRevertedError, hexToBytes, type Client, type Hex } from 'viem'
 import { readContract } from 'viem/actions'
 import { decodePublicValues, type ProofBundle, type PublicValues } from './bundle'
 import { ACCEPTED_VKEYS, KNOWN_KEYS, REGISTRY, SP1_GATEWAY } from './config'
+import { verifyCompressed } from './wasm'
 
 export type Check = { label: string; ok: boolean; detail?: string }
 export type Verdict = { valid: boolean; checks: Check[]; values?: PublicValues; claimed?: boolean; keyName?: string }
@@ -79,16 +80,22 @@ export function reason(e: unknown): string {
 }
 
 /**
- * Verifies a bundle without trusting the server: an accepted (pinned) program vkey, and the SP1
- * Groth16 gateway via eth_call. The DKIM key allowlist is enforced inside the proof by each accepted
- * program version, so the key is only looked up here for display. Every check runs and is
- * reported, so a failure is explainable.
+ * Verifies a bundle without trusting the server: an accepted (pinned) program vkey, then the proof.
+ * A compressed proof is verified here in the browser (WebAssembly), with no network access. A
+ * Groth16 proof is checked by the SP1 gateway on Base Sepolia via eth_call. The DKIM key allowlist
+ * is enforced inside the proof by each accepted program version, so the key is only looked up here
+ * for display. Every check runs and is reported, so a failure is explainable.
  */
-export async function verifyBundle(b: ProofBundle, client: Client): Promise<Verdict> {
+export async function verifyBundle(b: ProofBundle, client?: Client): Promise<Verdict> {
   const checks: Check[] = []
   const add = (label: string, ok: boolean, detail?: string) => (checks.push({ label, ok, detail }), ok)
 
-  add('Real proof (Groth16)', b.proofSystem === 'groth16', b.proofSystem === 'mock' ? 'Mock bundle from a development prover: contains no proof.' : undefined)
+  const real = b.proofSystem === 'compressed' || b.proofSystem === 'groth16'
+  add(
+    'Real proof (not a development mock)',
+    real,
+    b.proofSystem === 'mock' ? 'Mock bundle from a development prover: contains no proof.' : real ? b.proofSystem : `Unknown proof type ${b.proofSystem}`,
+  )
   const vkeyOk = ACCEPTED_VKEYS.includes(b.vkey.toLowerCase() as Hex)
   add('Proof is for an accepted zkCert program version (vkey)', vkeyOk, vkeyOk ? undefined : `vkey ${b.vkey} is not an accepted version`)
 
@@ -103,20 +110,38 @@ export async function verifyBundle(b: ProofBundle, client: Client): Promise<Verd
   // Display only: the proof already rejected any key outside the program's table.
   const keyName = values && KNOWN_KEYS.find((k) => k.keyHash === values!.dkimKeyHash.toLowerCase() && k.platform === values!.platform)?.name
 
-  try {
-    await readContract(client, {
-      address: SP1_GATEWAY,
-      abi: gatewayAbi,
-      functionName: 'verifyProof',
-      args: [b.vkey, b.publicValues, b.proof as Hex],
-    })
-    add('SP1 proof verifies on-chain (Base Sepolia gateway, eth_call)', true)
-  } catch (e) {
-    add('SP1 proof verifies on-chain (Base Sepolia gateway, eth_call)', false, reason(e))
+  if (b.proofSystem === 'groth16') {
+    if (!client) {
+      add('SP1 proof verifies on-chain (Base Sepolia gateway, eth_call)', false, 'No RPC client for Base Sepolia.')
+    } else {
+      try {
+        await readContract(client, {
+          address: SP1_GATEWAY,
+          abi: gatewayAbi,
+          functionName: 'verifyProof',
+          args: [b.vkey, b.publicValues, b.proof as Hex],
+        })
+        add('SP1 proof verifies on-chain (Base Sepolia gateway, eth_call)', true)
+      } catch (e) {
+        add('SP1 proof verifies on-chain (Base Sepolia gateway, eth_call)', false, reason(e))
+      }
+    }
+  } else if (b.proofSystem === 'compressed') {
+    const label = 'SP1 proof verifies in this browser (WebAssembly, no network)'
+    try {
+      if (!b.vkeyHash) throw new Error('The file has no vkeyHash.')
+      const t = performance.now()
+      const vkey = await verifyCompressed(hexToBytes(b.proof), hexToBytes(b.publicValues), hexToBytes(b.vkeyHash))
+      // The proof was checked against vkeyHash, so that must be the vkey accepted above.
+      if (vkey.toLowerCase() !== b.vkey.toLowerCase()) throw new Error(`vkeyHash is for program ${vkey}, not ${b.vkey}.`)
+      add(label, true, `${Math.round(performance.now() - t)} ms`)
+    } catch (e) {
+      add(label, false, e instanceof Error ? e.message : String(e))
+    }
   }
 
   // The registry's owner may have retired a version this app still lists; Mint would then revert.
-  if (REGISTRY) {
+  if (REGISTRY && client && b.proofSystem === 'groth16') {
     try {
       const ok = await readContract(client, { address: REGISTRY, abi: registryAbi, functionName: 'acceptedVKeys', args: [b.vkey] })
       add('Registry accepts this program version', ok, ok ? undefined : 'Retired or never added on-chain (setVKey).')
@@ -126,7 +151,7 @@ export async function verifyBundle(b: ProofBundle, client: Client): Promise<Verd
   }
 
   let claimed: boolean | undefined
-  if (values && REGISTRY) {
+  if (values && REGISTRY && client && b.proofSystem === 'groth16') {
     try {
       const uid = await readContract(client, { address: REGISTRY, abi: registryAbi, functionName: 'claimed', args: [values.nullifier] })
       claimed = BigInt(uid) !== 0n

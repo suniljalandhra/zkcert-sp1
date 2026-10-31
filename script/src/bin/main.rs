@@ -3,7 +3,7 @@
 //! ```shell
 //! cargo run --release -- execute fixtures/sample.eml            # run the guest, print cycles
 //! cargo run --release -- execute x.eml --no-host-check          # skip host checks (demos)
-//! cargo run --release -- prove fixtures/sample.eml --wallet 0x… # Groth16 proof -> zkcert-proof.json
+//! cargo run --release -- prove fixtures/sample.eml --wallet 0x… # compressed proof -> zkcert-proof.json
 //! cargo run --release -- verify zkcert-proof.json               # offline verification
 //! cargo run --release -- vkey                                   # program verification key
 //! ```
@@ -20,7 +20,7 @@ use zkcert_script::{
     discover::KeySource,
     inputs::{guest_input, prepare, Prepared},
     keys,
-    prover::{accepted_vkeys, program_vkey, ZkProver},
+    prover::{accepted_vkeys, program_vkey, ProofSystem, ZkProver},
     synth,
 };
 
@@ -42,14 +42,18 @@ enum Cmd {
         #[arg(long)]
         no_host_check: bool,
     },
-    /// Generate a Groth16 proof and write a proof bundle.
+    /// Generate a proof and write a proof bundle.
     Prove {
         #[command(flatten)]
         email: EmailArgs,
         #[arg(long, default_value = "zkcert-proof.json")]
         out: PathBuf,
+        /// `compressed` (local, verified off-chain) or `groth16` (on-chain; needs SP1_PROVER=network
+        /// or a machine with much more than 16 GB RAM).
+        #[arg(long, default_value = "compressed", value_parser = ["compressed", "groth16"])]
+        proof_system: String,
     },
-    /// Verify a proof bundle offline (accepted program vkey, Groth16 proof).
+    /// Verify a proof bundle offline (accepted program vkey, then the compressed or Groth16 proof).
     Verify {
         bundle: PathBuf,
         /// Accept bundles made with SP1_PROVER=mock (they contain no real proof).
@@ -170,14 +174,19 @@ fn run() -> Result<()> {
             print_values(&values);
             println!("cycles: {cycles}");
         }
-        Cmd::Prove { email, out } => {
+        Cmd::Prove {
+            email,
+            out,
+            proof_system,
+        } => {
             if email.wallet == Address::ZERO {
                 bail!(
                     "--wallet is required: the proof is bound to it and only that wallet can claim"
                 );
             }
             let p = load(&email)?;
-            let bundle = ZkProver::from_env()?.prove(&p.input)?;
+            let system = ProofSystem::parse(&proof_system).expect("clap checked it");
+            let bundle = ZkProver::from_env()?.prove(&p.input, system)?;
             std::fs::write(&out, serde_json::to_string_pretty(&bundle)?)?;
             print_values(&p.expected);
             println!("wrote {}", out.display());

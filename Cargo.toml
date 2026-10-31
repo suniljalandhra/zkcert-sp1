@@ -1,5 +1,5 @@
 [workspace]
-members = ["lib", "script", "server"]
+members = ["lib", "script", "server", "verifier"]
 # The guest has its own workspace so its [patch] section (SP1 precompile crates) never touches host builds.
 exclude = ["program"]
 resolver = "2"

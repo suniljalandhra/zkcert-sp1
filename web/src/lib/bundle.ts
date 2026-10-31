@@ -15,8 +15,10 @@ export type Decoded = {
 export type ProofBundle = {
   version: string
   sp1Version: string
-  proofSystem: 'groth16' | 'mock' | string
+  proofSystem: 'compressed' | 'groth16' | 'mock' | string
   vkey: Hex
+  /** Compressed proofs only: SP1's KoalaBear vkey digest (bincode); must map to `vkey`. */
+  vkeyHash?: Hex
   proof: Hex
   publicValues: Hex
   decoded: Decoded

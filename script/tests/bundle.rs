@@ -140,6 +140,105 @@ fn bundle_records_sdk_version() {
     );
 }
 
+/// The same bundle claiming another wallet: valid encoding, consistent `decoded`, wrong proof.
+fn with_other_wallet(b: &ProofBundle) -> ProofBundle {
+    let mut v = PublicValues::abi_decode(&hex::decode(&b.public_values).unwrap()).unwrap();
+    v.wallet = alloy_primitives::Address::repeat_byte(0xbb);
+    let mut t = b.clone();
+    t.public_values = hex::encode_prefixed(PublicValues::abi_encode(&v));
+    t.decoded = Decoded::from(&v);
+    t
+}
+
+// ---- Compressed proofs ----
+
+/// The program's KoalaBear vkey digest, as `prove` writes it into compressed bundles.
+fn program_vkey_hash() -> String {
+    use sp1_sdk::{
+        blocking::{MockProver, Prover},
+        HashableKey, ProvingKey,
+    };
+    let pk = MockProver::new()
+        .setup(zkcert_script::prover::ZKCERT_ELF)
+        .unwrap();
+    hex::encode_prefixed(bincode::serialize(&pk.verifying_key().hash_koalabear()).unwrap())
+}
+
+fn compressed_bundle() -> ProofBundle {
+    let mut b = mock();
+    b.proof_system = "compressed".into();
+    b.vkey = pinned_vkey().unwrap();
+    b.vkey_hash = Some(program_vkey_hash());
+    b
+}
+
+#[test]
+fn vkey_hash_maps_to_pinned_vkey() {
+    // The browser and CLI derive the bytes32 vkey from the digest the compressed proof is checked
+    // against; it must equal what sp1-sdk calls bytes32 for this program.
+    let digest = hex::decode(program_vkey_hash()).unwrap();
+    assert_eq!(
+        zkcert_verifier::vkey_bytes32(&digest).unwrap(),
+        pinned_vkey().unwrap()
+    );
+}
+
+#[test]
+fn compressed_without_vkey_hash_is_rejected() {
+    let mut b = compressed_bundle();
+    b.vkey_hash = None;
+    let e = verify_bundle(&b, &accepted_vkeys().unwrap(), false)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("no vkeyHash"), "{e}");
+}
+
+#[test]
+fn compressed_vkey_hash_of_another_program_is_rejected() {
+    // An accepted `vkey` label with a digest for a different program: the proof would be checked
+    // against the wrong program.
+    let mut b = compressed_bundle();
+    b.vkey = VKEY.into();
+    let e = verify_bundle(&b, &accepted(), false)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("vkeyHash is for program"), "{e}");
+}
+
+#[test]
+fn compressed_garbage_proof_is_rejected() {
+    let mut b = compressed_bundle();
+    b.proof = "0x00112233".into();
+    let e = verify_bundle(&b, &accepted_vkeys().unwrap(), false)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("compressed proof invalid"), "{e}");
+}
+
+/// A real compressed proof of a real email (git-ignored; make it with
+/// `zkcert prove fixtures/your.eml --wallet 0x… --out fixtures/compressed-proof.json`).
+fn compressed_fixture() -> Option<ProofBundle> {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../fixtures/compressed-proof.json"
+    );
+    let text = std::fs::read_to_string(path).ok()?;
+    Some(serde_json::from_str(&text).unwrap())
+}
+
+#[test]
+fn real_compressed_proof_verifies_and_tampering_fails() {
+    let Some(b) = compressed_fixture() else {
+        eprintln!("skipping: fixtures/compressed-proof.json not present");
+        return;
+    };
+    let accepted = accepted_vkeys().unwrap();
+    verify_bundle(&b, &accepted, false).unwrap();
+    let t = with_other_wallet(&b);
+    let e = verify_bundle(&t, &accepted, false).unwrap_err().to_string();
+    assert!(e.contains("compressed proof invalid"), "{e}");
+}
+
 // ---- Real Groth16 fixture (a proof of a real, allowlisted email) ----
 
 fn fixture() -> ProofBundle {
@@ -160,12 +259,7 @@ fn groth16_fixture_verifies_for_accepted_program() {
 #[test]
 #[ignore = "needs contracts/src/fixtures/groth16-proof.json"]
 fn groth16_rejects_tampered_public_values() {
-    let mut b = fixture();
-    let mut pv = hex::decode(&b.public_values).unwrap();
-    let last = pv.len() - 1;
-    pv[last] ^= 1; // last byte of the wallet
-    b.public_values = hex::encode_prefixed(&pv);
-    b.decoded = Decoded::from(&PublicValues::abi_decode(&pv).unwrap());
+    let b = with_other_wallet(&fixture());
     let e = verify_bundle(&b, &accepted_vkeys().unwrap(), false)
         .unwrap_err()
         .to_string();

@@ -28,6 +28,8 @@ tracing = "0.1.40"
 hex = "0.4.3"
 alloy-sol-types = { workspace = true }
 zkcert-lib = { path = "../lib" }
+zkcert-verifier = { path = "../verifier" }
+bincode = "1.3"
 dotenv = "0.15.0"
 # Host-only email handling (never compiled into the guest).
 mail-auth = { version = "0.15.0", default-features = false, features = ["rust-crypto", "dns-hickory"] }

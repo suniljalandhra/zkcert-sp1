@@ -16,11 +16,6 @@ export function Verify({ initial, onLoad }: { initial: ProofBundle | null; onLoa
 
   const run = useCallback(
     async (b: ProofBundle) => {
-      if (!client) {
-        setError('No RPC client for Base Sepolia.')
-        setBusy(false)
-        return
-      }
       try {
         setVerdict(await verifyBundle(b, client))
       } catch (e) {
@@ -35,11 +30,11 @@ export function Verify({ initial, onLoad }: { initial: ProofBundle | null; onLoa
   // Verify the proof generated in this session when the tab opens.
   const started = useRef(false)
   useEffect(() => {
-    if (initial && client && !started.current) {
+    if (initial && !started.current) {
       started.current = true
       void run(initial)
     }
-  }, [initial, client, run])
+  }, [initial, run])
 
   const load = async (f: File | undefined) => {
     if (!f) return
@@ -60,9 +55,9 @@ export function Verify({ initial, onLoad }: { initial: ProofBundle | null; onLoa
   return (
     <section className="stack">
       <p className="muted">
-        Checks run in your browser: the accepted program versions are pinned in this app (each one only accepts Coursera's and Udemy's pinned DKIM
-        keys, checked inside the proof), and the proof is verified by the SP1 verifier gateway on Base Sepolia with a read-only call. The prover
-        server is not involved.
+        Everything runs in your browser; the prover server is not involved. The accepted program versions are pinned in this app (each one only
+        accepts Coursera&apos;s and Udemy&apos;s pinned DKIM keys, checked inside the proof). An off-chain proof is verified right here with
+        WebAssembly; an on-chain (Groth16) proof is checked by the SP1 verifier on Base Sepolia with a read-only call.
       </p>
       <div className="drop" onClick={() => input.current?.click()} role="button" tabIndex={0} onDragOver={(e) => e.preventDefault()} onDrop={(e) => (e.preventDefault(), load(e.dataTransfer.files[0]))}>
         <input ref={input} type="file" accept=".json,application/json" hidden onChange={(e) => load(e.target.files?.[0])} />

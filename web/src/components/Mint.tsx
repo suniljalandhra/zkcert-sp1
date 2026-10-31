@@ -26,6 +26,17 @@ export function Mint({ bundle }: { bundle: ProofBundle | null }) {
     )
   }
   if (!bundle) return <p className="muted">Generate a proof first, or load one in the Verify tab.</p>
+  if (bundle.proofSystem === 'compressed') {
+    return (
+      <section className="stack">
+        <p className="muted">
+          This is an off-chain proof: anyone can verify it in the Verify tab, for free. To record it on-chain, generate an <strong>on-chain
+          (Groth16)</strong> proof in the Generate tab. That needs the prover server to run with <code>SP1_PROVER=network</code> (Succinct&apos;s
+          prover network, which receives your email) or a machine with much more memory than 16 GB.
+        </p>
+      </section>
+    )
+  }
 
   const registry = REGISTRY
   const v = decodePublicValues(bundle.publicValues)

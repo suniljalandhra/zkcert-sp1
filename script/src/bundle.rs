@@ -51,6 +51,10 @@ pub struct ProofBundle {
     pub proof_system: String,
     /// Program verification key hash (bytes32).
     pub vkey: String,
+    /// Compressed proofs only: the same vkey as SP1's KoalaBear digest (bincode, hex), which the
+    /// compressed verifier needs. It must map to `vkey`; verifiers check that.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vkey_hash: Option<String>,
     pub proof: String,
     pub public_values: String,
     /// Human-readable copy of `public_values`; never trusted, always re-derived.
@@ -65,6 +69,7 @@ impl ProofBundle {
             sp1_version: SP1_VERSION.into(),
             proof_system: system.into(),
             vkey,
+            vkey_hash: None,
             proof: hex::encode_prefixed(proof),
             public_values: hex::encode_prefixed(public_values),
             decoded: Decoded::from(&values),
@@ -109,6 +114,24 @@ pub fn verify_bundle(
                 &sp1_verifier::GROTH16_VK_BYTES,
             )
             .map_err(|e| anyhow::anyhow!("Groth16 proof invalid: {e}"))?;
+        }
+        "compressed" => {
+            let proof = hex::decode(&b.proof).context("proof is not hex")?;
+            let vkey_hash = hex::decode(
+                b.vkey_hash
+                    .as_deref()
+                    .context("compressed bundle has no vkeyHash")?,
+            )
+            .context("vkeyHash is not hex")?;
+            // The proof is checked against vkeyHash, so that digest must be the accepted `vkey`.
+            let vkey = zkcert_verifier::vkey_bytes32(&vkey_hash).map_err(|e| anyhow::anyhow!(e))?;
+            ensure!(
+                vkey.eq_ignore_ascii_case(&b.vkey),
+                "vkeyHash is for program {vkey}, not {}",
+                b.vkey
+            );
+            zkcert_verifier::verify_compressed(&proof, &pv, &vkey_hash)
+                .map_err(|e| anyhow::anyhow!("compressed proof invalid: {e}"))?;
         }
         "mock" if allow_mock => {}
         "mock" => bail!("mock bundle: not a real proof (pass --allow-mock for development)"),
