@@ -67,7 +67,15 @@ CLI:
 ./target/release/zkcert execute fixtures/your.eml --no-host-check   # run only the SP1 program
 ```
 
-Tests:
+No email of your own? No sample proof is committed: a valid one would come from a real inbox. Instead,
+`fixtures/redacted/synthetic-udemy.eml` is a fake Udemy email signed with a throwaway key. Run it
+through the SP1 program with that key supplied, and the program itself rejects it (key not pinned):
+```bash
+./target/release/zkcert execute fixtures/redacted/synthetic-udemy.eml --no-host-check \
+  --key test._domainkey.e.udemymail.com=fixtures/redacted/synthetic-udemy.key
+```
+
+Tests (135 Rust, 19 Foundry; the 2 ignored Rust and 7 skipped Foundry tests need a real Groth16 proof in `contracts/src/fixtures/groth16-proof.json`):
 ```bash
 cargo test --release -p zkcert-lib -p zkcert-script -p zkcert-server -p zkcert-verifier
 (cd contracts && forge test)

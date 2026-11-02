@@ -32,6 +32,8 @@ fixtures/*
 **/proof-with-pis.json
 **/proof-with-io.json
 **/zkcert-proof*.json
+**/proof*.json
+!examples/proof.json
 *.proof
 *.bin
 
@@ -44,3 +46,5 @@ pgo-data.profdata
 docs/
 CLAUDE.md
 .claude/
+.vscode/
+.idea/
